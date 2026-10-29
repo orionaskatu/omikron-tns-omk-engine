@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cctype>
 #include "platform/env.h"
+#include "o3de/pedtint.h"
 
 #include <algorithm>
 #include <chrono>
@@ -357,15 +358,28 @@ void PlayState::worldDrawLists() {
                              &up->posed, b.start, b.count, b.blend, b.cutout,
                              litStaged | shine(up), castShadows});
     }
+    // THE CROWD'S COLOUR VARIATION (`pedvariety`, `o3de/pedtint.h`): each walker's own
+    // tint word rides in his draws' `lit` - for a renderer that reads it (`tintsBodies`),
+    // and not while the original's look shows (`enhShown_`: F10). The walkers alone: the
+    // player, the story characters and the fighters are other loops.
+    const bool pedTintOn = pedVariety && enhShown_ && world_ && world_->tintsBodies();
+    if (pedTintOn && !pedVarietyTold) {
+        pedVarietyTold = true;
+        std::printf("pedvariety: on - an ENHANCEMENT: each crowd walker in his own colours (clothes "
+                    "turned in hue, saturation and brightness by a hash of the area's seed and his "
+                    "slot; skin, eyes and near-black/near-white kept) - a word in the draw, "
+                    "applied by the shader on the shipped or the pack's texels\n");
+    }
     for (const auto& up : crowd.staged) {
         if (!up->drawn || !up->mo) continue;
         const int base = static_cast<int>(up->mo->texBase);
+        const int litPed = pedTintOn ? (litStaged | omk::pedTintWord(up->look)) : litStaged;
         if (up->gpu && up->restGeo) {
             for (const auto& b : up->restGeo->batches) {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->restGeo, b.start, b.count, b.blend, b.cutout,
-                                 litStaged, castShadows});
+                                 litPed, castShadows});
                 omk::Draw& dr = draws.back();
                 dr.meshPose = up->affine.data();
                 dr.meshPoses = up->mo->meshes.size();
@@ -380,7 +394,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
+                             litPed, castShadows});
     }
     for (const auto& up : traffic.staged) {
         if (!up->drawn || !up->mo) continue;

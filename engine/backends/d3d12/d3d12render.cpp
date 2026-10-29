@@ -626,6 +626,7 @@ public:
                         float strength, float planeY) override;
     bool softParticlesLive() const override { return softOn_; }
     bool volumetricsLive() const override { return volOn_; }
+    bool tintsBodies() const override { return true; }
     // FRAME GENERATION (`todo/enhancements.md` 27): asked for here, decided in
     // `init` (a window, one sample a pixel), its passes made on first use
     bool setFrameGeneration(bool on) override {
@@ -3752,7 +3753,7 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
         if (floorNow) texScale_ |= static_cast<std::uint32_t>(std::lround(std::clamp(d.reflect, 0.0f, 1.0f) * 255.0f)) << 22;
     }
     push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
-    push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor));
+    push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor | omk::kDrawTintMask));
     if (!rtReflOn_) push_.lit &= ~omk::kDrawFloor;
     // THE FOG's two exclusions, the same rule `renderer.cpp` applies for the
     // software loop and Vulkan applies in `submitOne`: key bits 0x2080 not
@@ -4268,7 +4269,7 @@ void D3D12Renderer::rtNote(const omk::Draw& d) {
     const std::size_t slot = omk::drawTextureSlot(d);
     const UINT srv = rtTexWord(slot);   // the heap index, with a pack's k
     const bool posed = d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size();
-    if (posed || d.castsShadow || (d.lit & ~(omk::kDrawSoft | omk::kDrawFloor)) != 0) {
+    if (posed || d.castsShadow || (d.lit & ~(omk::kDrawSoft | omk::kDrawFloor | omk::kDrawTintMask)) != 0) {
         RtBodyNote& n = rtNotes_[{posed ? d.meshPose : nullptr, d.geo}];
         n.geo = d.geo;
         if (posed && n.aff.empty()) n.aff.assign(d.meshPose, d.meshPose + 12 * d.meshPoses);

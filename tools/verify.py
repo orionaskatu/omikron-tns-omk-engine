@@ -7683,7 +7683,7 @@ def c_enhance_all():
              "lod": "BestLod", "vehicleshine": "VehicleShine", "colordepth": "ColourDepth",
              "bloom": "Bloom", "dof": "Dof", "softparticles": "SoftParticles",
              "volumetrics": "Volumetrics", "rtreflections": "RtReflections",
-             "framegen": "FrameGen", "animblend": "AnimBlend"}
+             "framegen": "FrameGen", "animblend": "AnimBlend", "pedvariety": "PedVariety"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -7698,6 +7698,147 @@ def c_enhance_all():
             "that a specific key still beats it (anisotropy 4), and that `all = max` "
             "leaves supersampling OFF (1) while `supersampling = 4` beside it gives 4, and the "
             "upscaler, the colour grade, HDR and the texture pack off (0)" % len(keys))
+
+def c_crowd_variety():
+    r"""`pedvariety = on`: every walker of the street crowd in his own colours, and
+    the skin, the player and the original/remaster switch untouched
+    (`todo/enhancements.md` 29, `o3de/pedtint.h`).
+
+    The look is a word in `Draw::lit` that `scene.frag` applies to the texel
+    (so a texture pack's replacement is tinted too, at any k, and nothing is
+    uploaded, drawn twice or keyed again). Five things are held:
+    * THE SETTING, `animblend`'s shape: off by default in `settings.h`; the key
+      resolves (`on` 1, `off` 0), `all = max` turns it on and `pedvariety =
+      off` beside it beats that;
+    * THE SHADER AND THE HEADER AGREE: the `kPed*` constants of `pedtint.h` and
+      of `scene.frag` are the same numbers, and the bits the shader unpacks
+      (`pc.lit & 32`, `>> 6`, `>> 14`, `>> 18`) are the header's;
+    * THE COLOURS, over every page of the 21 crowd models (`pedtint_probe`, the
+      palette entries being the colours a palettised page can show) and 4096
+      words: skin (hue 5..45, saturation 0.2..0.55) exactly kept, near-white
+      kept, near-black still black, the colours meant to be turned (green to
+      magenta) changed by at least 6/255 in 90% of the words and into over a
+      thousand distinct colours - and the probe run with the skin rule off
+      (`--break`) reports the skin violations, which is the failure the check
+      is for;
+    * THE WALKERS' LOOKS: Anekbah's 200 walkers wear 200 distinct words, two
+      loads with one seed give every slot the same word, another seed other
+      ones;
+    * THE PICTURE, on Vulkan and on Direct3D 12: a street with the crowd
+      differs from the plain one under `--ped-variety` (the walkers moved,
+      more than 0.02% of the pixels) and is the plain one exactly under
+      `--no-crowd` (the player, the set and the props are not recoloured) and
+      with `[Remaster] mode = original` (the F10 switch puts it away).
+    Skipped where there is no data, no device, or the tools do not build.
+    SHOWN TO FAIL by the probe's `--break` (skin rule off: 8,085,504 skin
+    violations), with the shader testing bit 64 for the tint instead of 32
+    (the bits check: the shader no longer unpacks the header's word) and with
+    the frontend not setting the word (the crowd differs in 0.00% of pixels).
+    """
+    import subprocess, struct, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    hdr = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    ped = open(os.path.join(eng, "src", "o3de", "pedtint.h"), encoding="utf-8").read()
+    frag = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag"), encoding="utf-8").read()
+    default_off = "bool   pedVariety = false;" in hdr
+    hc = dict((k, float(v)) for k, v in re.findall(r"constexpr float (kPed\w+) = ([\d.]+)f;", ped))
+    sc = dict((k, float(v)) for k, v in re.findall(r"^const float (kPed\w+) = ([\d.]+);", frag, re.M))
+    shifts = dict((k, int(v)) for k, v in re.findall(r"constexpr int (kPedTint\w+Shift) = (\d+);", ped))
+    bits_ok = ("(pc.lit & 32) != 0" in frag and "kDrawTint = 32;" in open(
+                   os.path.join(eng, "src", "o3de", "renderer.h"), encoding="utf-8").read() and
+               ("(word >> %d) & 255" % shifts.get("kPedTintHueShift", -1)) in frag and
+               ("(word >> %d) & 15" % shifts.get("kPedTintSatShift", -1)) in frag and
+               ("(word >> %d) & 15" % shifts.get("kPedTintValShift", -1)) in frag)
+    same_consts = len(hc) >= 15 and hc == sc
+    mk = subprocess.run(["make", "-s", "build/settings_probe", "build/pedtint_probe", "play"], cwd=eng,
+                        capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "settings_probe")
+    pt = os.path.join(eng, "build", "pedtint_probe")
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(pt) or os.path.exists(pt + ".exe")):
+        return ("build failed",), ("built",), "engine/ must build: " + mk.stderr[-200:]
+    def pedvar(text):
+        with tempfile.NamedTemporaryFile("w", suffix=".ini", delete=False) as f:
+            f.write(text); path = f.name
+        out = subprocess.run([probe, "--config", path], capture_output=True, text=True).stdout
+        os.unlink(path)
+        m = re.search(r"^enh pedvariety (\d+)", out, re.M)
+        return int(m.group(1)) if m else -1
+    setting = (pedvar("[Enhancements]\n"), pedvar("[Enhancements]\npedvariety = on\n"),
+               pedvar("[Enhancements]\npedvariety = off\n"), pedvar("[Enhancements]\nall = max\n"),
+               pedvar("[Enhancements]\nall = max\npedvariety = off\n"))
+    data = omkpaths.data_root()
+    def probe_run(extra):
+        r = subprocess.run([pt, data] + extra, capture_output=True, text=True)
+        t = r.stdout
+        g = lambda pat: [float(x) for x in re.findall(pat, t)]
+        return t, {
+            "skin": (g(r"skin_violations (\d+)") or [-1])[0],
+            "white": (g(r"white_violations (\d+)") or [-1])[0],
+            "black": (g(r"black_violations (\d+)") or [-1])[0],
+            "slow": (g(r"turned_entries_moving_under_90pct (\d+)") or [-1])[0],
+            "distinct": (g(r"distinct_colours_min (\d+)") or [0])[0],
+            "walkers": (g(r"walkers (\d+)") or [0])[0],
+            "words": (g(r"distinct_words (\d+)") or [0])[0],
+            "equal": (g(r"same_seed_equal (\d+)") or [0])[0],
+            "differs": (g(r"other_seed_differs (\d+)") or [0])[0]}
+    t_ok, ok = probe_run([])
+    if "no crowd model" in t_ok:
+        return ("no data",), ("data",), "the crowd's models are not under the data root"
+    _, brk = probe_run(["--break"])
+    colours = (ok["skin"], ok["white"], ok["black"], ok["slow"], ok["distinct"] > 1000)
+    looks = (ok["walkers"] >= 150, ok["words"] >= 150, ok["equal"], ok["differs"] >= 0.9 * ok["walkers"])
+    # the picture
+    W, H = 640, 360
+    n = W * H
+    moved = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        ini = os.path.join(tmp, "orig.ini")
+        open(ini, "w").write("[Remaster]\nmode = original\n")
+        def run(api, extra, name):
+            out = os.path.join(tmp, "%s-%s.bin" % (name, api))
+            r = subprocess.run([play, data, os.path.join(ROOT, "tables"), "--save", save, "--area", "0",
+                                "--stand", "1500,0,-9500,180", "--world-" + api, "--nofmv", "--nodelay",
+                                "--res", "%dx%d" % (W, H), "--frames", "60", "--density", "4",
+                                "--saves", tmp, "--dump", out] + extra,
+                               capture_output=True, env=dict(os.environ, SDL_VIDEODRIVER="dummy"))
+            text = r.stdout.decode("latin-1") + r.stderr.decode("latin-1")
+            return text, (open(out, "rb").read() if os.path.exists(out) else b"")
+        def diff(a, b):
+            if not (len(a) == len(b) == n * 2):
+                return 1.0
+            pa, pb = struct.unpack("<%dH" % n, a), struct.unpack("<%dH" % n, b)
+            return sum(1 for p, q in zip(pa, pb) if p != q) / n
+        for api, label in (("vulkan", "VULKAN"), ("d3d12", "D3D12")):
+            t_off, d_off = run(api, [], "off")
+            if ("renderer: the world through " + label) not in t_off:
+                moved[api] = None
+                continue
+            _, d_on = run(api, ["--ped-variety"], "on")
+            _, d_nc0 = run(api, ["--no-crowd"], "nc0")
+            _, d_nc1 = run(api, ["--no-crowd", "--ped-variety"], "nc1")
+            _, d_or = run(api, ["--ped-variety", "--config", ini], "orig")
+            moved[api] = (diff(d_off, d_on), diff(d_nc0, d_nc1), diff(d_off, d_or))
+    got = [setting == (0, 1, 0, 1, 0), default_off, same_consts, bits_ok, colours == (0, 0, 0, 0, True),
+           brk["skin"] > 0, looks == (True, True, 1.0, True)]
+    want = [True, True, True, True, True, True, True]
+    note = ("setting %s; %d constants; skin %d white %d black %d violations, %d slow, >=%d colours; "
+            "--break: %d skin violations; %d walkers, %d words, other seed differs in %d"
+            % (setting, len(hc), ok["skin"], ok["white"], ok["black"], ok["slow"], ok["distinct"],
+               brk["skin"], ok["walkers"], ok["words"], ok["differs"]))
+    shown = [a for a, m in moved.items() if m is not None]
+    if not shown:
+        note += "; no GPU renderer here - the picture not checked"
+    for a in shown:
+        on, nc, orig = moved[a]
+        got += [on > 0.0002, nc == 0.0, orig == 0.0]
+        want += [True, True, True]
+        note += "; %s: crowd differs in %.2f%% of pixels, --no-crowd in %.2f%%, original mode in %.2f%%" % (
+            a, 100 * on, 100 * nc, 100 * orig)
+    return tuple(got), tuple(want), note
 
 
 
@@ -54903,6 +55044,7 @@ CHECKS = [
     ("config template",    c_config_template,   "todo/options-config"),
     ("play usage",         c_play_usage,        "engine/README"),
     ("enhance all",        c_enhance_all,       "todo/enhancements"),
+    ("crowd variety",      c_crowd_variety,     "todo/enhancements"),
 ]
 
 SLOW = [

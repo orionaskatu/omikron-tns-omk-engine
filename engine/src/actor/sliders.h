@@ -401,6 +401,13 @@ struct Pedestrian {
     float        side[2] = {0, 0};            // record +32/+36, the overtaking side-step (x, z)
     float        sideLen = 0.0f;              // record +40
     float        speedFactor = 1.0f;          // record +56, 0.75..1.20
+    // THE WALKER'S LOOK (`pedvariety`, `todo/enhancements.md` 29): a number of
+    // the port's own, not the engine's - a hash of the area's seed and the
+    // walker's slot, taken at the spawn WITHOUT drawing from `rng_` (the
+    // original's `rand()` sequence, which the traces compare, is not moved).
+    // The frontend turns it into a colour variation of the body's clothes
+    // when the enhancement is on; it is the same for the walker's whole life.
+    std::uint32_t look = 0;
     // ---- the action (mover +176 -> a state)
     int          action = -1;                 // the action point, while in one
     // ---- the orientation (mover +140, the 3x3 `sub_453330` builds)
@@ -755,6 +762,7 @@ private:
     int   level_ = kDefaultStreetActivity;
     int   talkTarget_ = -1;
     std::uint32_t rng_ = 1u;
+    std::uint32_t seed_ = 1u;                // the `load` seed, kept for the walkers' `look`
     std::uint32_t counter_ = 0;              // dword_4C8854
     int   nameNext_[3] = {0, 0, 0};          // dword_539940 / dword_539944
     bool  loaded_ = false;

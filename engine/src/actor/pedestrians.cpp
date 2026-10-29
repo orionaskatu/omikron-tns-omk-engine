@@ -258,6 +258,7 @@ void Sliders::load(const OptTrack& track, const PedClips& clips, std::uint32_t m
     track_ = track; clips_ = clips;
     level_ = std::clamp(streetActivity, 0, 4);
     rng_ = seed ? seed : 1u;
+    seed_ = rng_;
     // `sub_4539B0` over each table with its mask, then `sub_453E80(pool, n,
     // 100)`: every model's weight (1) scaled so the quotas sum to 100 -
     // integer division, so 12 models get 8 each and the rest goes unspent
@@ -400,6 +401,13 @@ bool Sliders::spawnOne(int lane, const float at[3], const float dir[3], float se
     w.route = L.firstRoute + static_cast<int>(counter_ % static_cast<std::uint32_t>(nr));
     w.flags = 0x8;
     const int idx = static_cast<int>(movers_.size());
+    // the walker's look (`Pedestrian::look`): the area's seed and his slot,
+    // through a 32-bit finaliser - no draw from `rng_`
+    {
+        std::uint32_t h = seed_ ^ (static_cast<std::uint32_t>(idx) * 0x9E3779B1u);
+        h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
+        w.look = h;
+    }
     movers_.push_back(std::move(w));
     auto& list = listFor(lane, keyIndex + 1);
     list.insert(list.begin(), idx);

@@ -295,6 +295,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --anim-blend     ENHANCEMENT: a clip change (the player's and a fighter's\n"
 "                   .CTL state, a walker's walk/idle) eased over 0.2 s instead of\n"
 "                   a snap - the drawn pose only; [Enhancements] animblend=on\n"
+"  --ped-variety    ENHANCEMENT: each walker of the street crowd in his own\n"
+"                   colours (clothes turned in hue, saturation, brightness; skin\n"
+"                   kept; D3D12, Vulkan); [Enhancements] pedvariety=on\n"
 "  --escape-back    ENHANCEMENT: ESC and BACKSPACE also mean BACK while a screen\n"
 "                   is up (the original's BACK is SPACE alone - `Annuler /\n"
 "                   Sauter`); [Enhancements] escapeback=on\n"
@@ -645,6 +648,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--ssaa" && i + 1 < argc) ssaaFlag = std::atoi(argv[++i]);
         else if (a == "--smooth-anim") smoothAnimFlag = 1;
         else if (a == "--anim-blend") animBlendFlag = 1;
+        else if (a == "--ped-variety") pedVarietyFlag = 1;
         else if (a == "--escape-back") escapeBackFlag = 1;
         else if (a == "--ssao") ssaoFlag = 1;
         else if (a == "--raytracing") raytracingFlag = 1;

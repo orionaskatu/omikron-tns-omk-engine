@@ -432,6 +432,7 @@ struct PedJob {
 
 struct PedStaged {
     CharModel* mo = nullptr;
+    std::uint32_t look = 0;          // [Enhancements] pedvariety: the walker's `Pedestrian::look`
     // A crowd model carries FOUR skeletons - `PhBassin`, `PiBassin`, ...,
     // the LOD sub-objects `sub_453A70` splits it into (76 meshes in
     // PSH_FN, 19 a skeleton) - and the library's tracks name the first.

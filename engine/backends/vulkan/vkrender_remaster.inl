@@ -260,9 +260,10 @@ bool VulkanRenderer::makePostAt() {
         // MSAA) - the frame lands where the post reads it, no copy (~1.3 ms
         // and 66 MB a 4K frame on the M1, the audit's 4K trims)
         const bool msaa = samples_ != VK_SAMPLE_COUNT_1_BIT;
-        VkImageView views[3] = {msaa ? msColourView_ : postSrcView_, depthView_, postSrcView_};
+        // (with the motion vectors on, `pass_`'s third attachment is the vectors, as `makeTarget`'s framebuffer has)
+        VkImageView views[3] = {msaa ? msColourView_ : postSrcView_, depthView_, mvOn_ ? motionView_ : postSrcView_};
         VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-        fi.renderPass = pass_; fi.attachmentCount = msaa ? 3 : 2; fi.pAttachments = views;
+        fi.renderPass = pass_; fi.attachmentCount = (msaa || mvOn_) ? 3 : 2; fi.pAttachments = views;
         fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
         VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &fbufPost_), "post scene framebuffer");
     }
@@ -665,9 +666,19 @@ bool VulkanRenderer::makeReflection() {
         killReflection();
         return false;
     }
-    VkImageView views[3] = {msaa ? reflMsView_ : reflColourView_, reflDepthView_, reflColourView_};
+    // WITH THE MOTION VECTORS (framegen or a temporal upscaler: `mvOn_`) `pass_` has a third attachment, the
+    // vectors - the reflection needs one of its own, never read: a 2-attachment framebuffer on that 3-attachment
+    // pass was a segfault in the driver's vkCmdBeginRenderPass at the first rain frame (the first reflection)
+    if (mvOn_ && !makeImage2d(VK_FORMAT_R16G16_SFLOAT, rw_, rh_, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              reflMotion_, reflMotionMem_, reflMotionView_, "water reflection motion")) {
+        std::fprintf(stderr, "vulkan: the water reflection's target - refused\n");
+        killReflection();
+        return false;
+    }
+    VkImageView views[3] = {msaa ? reflMsView_ : reflColourView_, reflDepthView_,
+                            mvOn_ ? reflMotionView_ : reflColourView_};   // (as `makeTarget`'s)
     VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    fi.renderPass = pass_; fi.attachmentCount = msaa ? 3 : 2; fi.pAttachments = views;
+    fi.renderPass = pass_; fi.attachmentCount = (msaa || mvOn_) ? 3 : 2; fi.pAttachments = views;
     fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
     if (vkCreateFramebuffer(dev_, &fi, nullptr, &reflFbuf_) != VK_SUCCESS) { killReflection(); return false; }
     // ...and the floors' one-sample one: the colour image itself, a depth of its own at half size
@@ -730,11 +741,11 @@ void VulkanRenderer::killReflection() {
     const bool had = reflColourView_ != VK_NULL_HANDLE;
     if (reflFbuf_) vkDestroyFramebuffer(dev_, reflFbuf_, nullptr);
     if (reflFbuf1_) vkDestroyFramebuffer(dev_, reflFbuf1_, nullptr);
-    for (auto* p : {&reflColourView_, &reflMsView_, &reflDepthView_, &reflDepth1View_})
+    for (auto* p : {&reflColourView_, &reflMsView_, &reflDepthView_, &reflDepth1View_, &reflMotionView_})
         if (*p) { vkDestroyImageView(dev_, *p, nullptr); *p = VK_NULL_HANDLE; }
-    for (auto* p : {&reflColour_, &reflMs_, &reflDepth_, &reflDepth1_})
+    for (auto* p : {&reflColour_, &reflMs_, &reflDepth_, &reflDepth1_, &reflMotion_})
         if (*p) { vkDestroyImage(dev_, *p, nullptr); *p = VK_NULL_HANDLE; }
-    for (auto* p : {&reflColourMem_, &reflMsMem_, &reflDepthMem_, &reflDepth1Mem_})
+    for (auto* p : {&reflColourMem_, &reflMsMem_, &reflDepthMem_, &reflDepth1Mem_, &reflMotionMem_})
         if (*p) { freeDeviceMemory(*p); *p = VK_NULL_HANDLE; }
     reflFbuf_ = VK_NULL_HANDLE;
     reflFbuf1_ = VK_NULL_HANDLE;

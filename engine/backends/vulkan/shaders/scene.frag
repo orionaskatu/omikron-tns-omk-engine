@@ -650,6 +650,68 @@ vec2 trickles(vec3 w, float clock, float rain) {
     return line * vec2(trail, bead);
 }
 
+// THE CROWD'S COLOUR VARIATION (`pedvariety`, `todo/enhancements.md` 29, `o3de/pedtint.h` - the
+// same math in C++, and `verify.py: crowd variety` compares the constants): a walker's own hue
+// turn, saturation and brightness on the texel, in `pc.lit` bits 6..21 (bit 5 says it is there).
+// Skin (a window of hue and saturation) and near-white are kept; so, by what they are, are
+// the near-blacks. The constants carry `pedtint.h`'s names and values.
+const float kPedHueCentre = 0.04;
+const float kPedHueFull = 0.095;
+const float kPedHueNone = 0.15;
+const float kPedSatLow0 = 0.05;
+const float kPedSatLow1 = 0.12;
+const float kPedSatHigh0 = 0.65;
+const float kPedSatHigh1 = 0.85;
+const float kPedDarkV0 = 0.30;
+const float kPedDarkV1 = 0.55;
+const float kPedDarkBy = 0.30;
+const float kPedWhiteV0 = 0.65;
+const float kPedWhiteV1 = 0.85;
+const float kPedWhiteS0 = 0.08;
+const float kPedWhiteS1 = 0.2;
+const float kPedSatBase = 0.55;
+const float kPedSatStep = 0.035;
+const float kPedValBase = 0.80;
+const float kPedValStep = 0.035;
+const float kPedChromaCap0 = 0.35;
+const float kPedChromaCap1 = 0.90;
+const float kPedChromaCapBy = 0.45;
+vec3 pedTint(vec3 c, int word) {
+    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+    float d = mx - mn;
+    float s = d / max(mx, 1e-4);
+    float h = 0.0;
+    if (d >= 1e-4) {
+        if (mx == c.r) { float x = (c.g - c.b) / d; h = (x - 6.0 * floor(x / 6.0)) / 6.0; }
+        else if (mx == c.g) h = ((c.b - c.r) / d + 2.0) / 6.0;
+        else h = ((c.r - c.g) / d + 4.0) / 6.0;
+    }
+    float hx = h - kPedHueCentre + 0.5;
+    float dh = abs((hx - floor(hx)) - 0.5);
+    float wh = 1.0 - smoothstep(kPedHueFull, kPedHueNone, dh);
+    float dark = 1.0 - smoothstep(kPedDarkV0, kPedDarkV1, mx);
+    float ws = smoothstep(kPedSatLow0, kPedSatLow1, s) *
+               (1.0 - smoothstep(kPedSatHigh0 + kPedDarkBy * dark, kPedSatHigh1 + kPedDarkBy * dark, s));
+    float white = smoothstep(kPedWhiteV0, kPedWhiteV1, mx) * (1.0 - smoothstep(kPedWhiteS0, kPedWhiteS1, s));
+    float prot = max(wh * ws, white);
+    if (prot >= 1.0) return c;
+    float a = float((word >> 6) & 255) * (6.28318530718 / 256.0);
+    float cs = cos(a), sn = sin(a);
+    float k = (1.0 - cs) / 3.0, q = 0.57735026919 * sn;
+    vec3 o = vec3((cs + k) * c.r + (k - q) * c.g + (k + q) * c.b,
+                  (k + q) * c.r + (cs + k) * c.g + (k - q) * c.b,
+                  (k - q) * c.r + (k + q) * c.g + (cs + k) * c.b);
+    // the turn keeps the mean of the three, not the luma: put the luma back
+    float y0 = dot(c, vec3(0.299, 0.587, 0.114));
+    o = clamp(o + (y0 - dot(o, vec3(0.299, 0.587, 0.114))), 0.0, 1.0);
+    float sc = kPedSatBase + float((word >> 14) & 15) * kPedSatStep;
+    sc *= 1.0 - kPedChromaCapBy * smoothstep(kPedChromaCap0, kPedChromaCap1, s);
+    float vc = kPedValBase + float((word >> 18) & 15) * kPedValStep;
+    float y = dot(o, vec3(0.299, 0.587, 0.114));
+    o = clamp((y + (o - y) * sc) * vc, 0.0, 1.0);
+    return o * (1.0 - prot) + c * prot;
+}
+
 void main() {
     int waterMode = PC_WATER & 15;                            // the water's mode (`Push`)
     float wetFilm = float((PC_WATER >> 4) & 255) / 255.0;     // a wet floor's darkening
@@ -696,6 +758,8 @@ void main() {
         if (t.a < 0.5) discard;
         t.rgb /= t.a;
     }
+    // a crowd walker's own colours (`pedvariety`)
+    if ((pc.lit & 32) != 0) t.rgb = pedTint(t.rgb, pc.lit);
     // A LIT batch starts from black and takes its shading from the lights;
     // every other one keeps the colour baked into its vertices.
     // 1 from black, 2 added to the baked colour - see `renderer.h`'s Draw.

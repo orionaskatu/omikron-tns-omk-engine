@@ -826,6 +826,7 @@ void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool c
         const auto& w = ws[i];
         PedStaged& p = *crowd.staged[i];
         p.drawn = false;
+        p.look = w.look;
         if (!w.live || !w.clip || crowd.ani.empty()) continue;
         ++crowd.live;
         if (w.flags & 0x80u) ++crowd.inAction;

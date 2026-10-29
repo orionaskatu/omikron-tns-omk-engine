@@ -292,6 +292,19 @@
 ; `--anim-blend`.
 ;animblend = off
 ;
+; PEDVARIETY - the street crowd wears twelve men's and nine women's models and
+; each has one texture, so 200 walkers share a handful of coats. `on` gives
+; every walker his own colours: the hue of his clothes turned, their saturation
+; and brightness moved (a muted range, never a neon one), by a hash of the
+; area's seed and his slot - he keeps them while he walks, the next visit to the
+; street dresses the crowd differently. Skin, hair in a skin tone, the eyes and
+; teeth and the near-blacks are kept; the player, the story characters and the
+; fighters are not touched. Applied by the shader on whatever texture is drawn,
+; so a texture pack's replacements show in the new colours. Direct3D 12 and
+; Vulkan; the original/remaster switch puts it away. In `all = max`.
+; `todo/enhancements.md` 29. `--ped-variety`.
+;pedvariety = off
+;
 ; LOD - a pedestrian model carries four bodies of falling detail and the game
 ; steps down one every 10 m, so past 10 m every walker is a coarser one. `best`
 ; keeps every walker on its most detailed body at any distance.

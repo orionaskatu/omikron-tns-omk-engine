@@ -313,6 +313,15 @@ inline constexpr int kDrawSoft = 8;
 // (`todo/enhancements.md` 26) may wet it. Set by the frontend only for a
 // renderer that answers `rtReflectionsLive()`; not a body, not a lit mode.
 inline constexpr int kDrawFloor = 16;
+// Bits 5..30: this BODY is a crowd walker with its own COLOUR VARIATION
+// (`pedvariety`, `todo/enhancements.md` 29, `o3de/pedtint.h`): bit 5 says it,
+// bits 6..21 are the tint - a hue turn, a saturation and a brightness - which
+// `scene.frag` applies to the texel, skin and the near-black and near-white
+// kept. The lit mode in the low two bits is unaffected. Set by the frontend
+// only for a renderer that answers `tintsBodies()`: the GLES shader reads the
+// whole of `lit` as a number.
+inline constexpr int kDrawTint = 32;
+inline constexpr int kDrawTintMask = 0x7FFFFFE0;
 
 struct Draw {
     std::uint32_t   bucketKey = 0;
@@ -625,6 +634,10 @@ public:
     // and Vulkan decline soft particles under MSAA, saying so).
     virtual bool softParticlesLive() const { return false; }
     virtual bool volumetricsLive() const { return false; }
+    // Whether `scene.frag` reads `kDrawTint` (a crowd walker's colour
+    // variation, `pedvariety`): Direct3D 12 and Vulkan. A backend that does not
+    // is never handed the bits - GLES takes the whole of `Draw::lit` as a number.
+    virtual bool tintsBodies() const { return false; }
     // FRAME GENERATION (`todo/enhancements.md` 27): between two rendered
     // frames an in-between picture, warped along the frame's motion vectors,
     // presented half an interval before the second. Same contract: a request

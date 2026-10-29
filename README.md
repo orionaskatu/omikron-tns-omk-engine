@@ -173,6 +173,7 @@ These are the settings added by this fork, all in `omk.ini.example` with a longe
 | `volumetrics` | A soft glow of light in the air around the street lamps. |
 | `framegen` | Frame generation: adds a picture between each two real ones. Only kicks in when the game runs slow. |
 | `animblend` | Smooths the animations when a character changes movement (starts walking, stops, turns). |
+| `pedvariety` | Every passer-by in the street crowd gets his own clothes colours (hue, saturation and brightness vary; skin is kept). Direct3D 12 and Vulkan. |
 | `lod` | `best` keeps every passer-by on the best model, even far away. `game` is the original. |
 | `vehicleshine` | Shiny lights and sky reflection on the sliders and motos. |
 | `upscaler` | `fsr` or `dlss` draws the game smaller and upscales it. Works with both renderers: FSR 4 on Direct3D 12 with an RDNA 4 card, FSR 3.1 everywhere else and on Vulkan. DLSS was never run on an NVIDIA card. |

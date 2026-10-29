@@ -217,6 +217,8 @@ int PlayState::setupSession() {
                     ".CTL state, a walker's walk/idle) is eased over %.2f s; the port draws the "
                     "new clip at once. The drawn pose only - no clock, transition or hit moves\n",
                     static_cast<double>(omk::kPoseBlendFrames) / 30.0);
+    // Row 29, the crowd's colour variation (`o3de/pedtint.h`), a word in the walkers' draws
+    pedVariety = enh(pedVarietyFlag, settings.pedVariety ? 1 : 0, omk::kMaxPedVariety) > 0;
     // ESC/BACKSPACE AS BACK (settings.h `escapeBack`), read by the screen
     // input in playframe_modes_parts.cpp
     escapeBack = enh(escapeBackFlag, settings.escapeBack ? 1 : 0, omk::kMaxEscapeBack) > 0;

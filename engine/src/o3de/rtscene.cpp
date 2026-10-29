@@ -65,7 +65,7 @@ void fillFrame(const float sky[3], const float eye[3], const float skyMean[3], b
 }
 
 bool isBodyDraw(const Draw& d) {
-    return d.meshPose != nullptr || (d.lit & ~(kDrawSoft | kDrawFloor)) != 0;
+    return d.meshPose != nullptr || (d.lit & ~(kDrawSoft | kDrawFloor | kDrawTintMask)) != 0;
 }
 
 void setCorners(const Geometry& g, std::vector<std::uint32_t>& all, std::uint32_t& nOpaque, std::uint32_t& nCut) {

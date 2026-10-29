@@ -95,6 +95,7 @@ struct PlayState {
     int & frameRateFlag = opt.frameRateFlag;
     int & smoothAnimFlag = opt.smoothAnimFlag;
     int & animBlendFlag = opt.animBlendFlag;
+    int & pedVarietyFlag = opt.pedVarietyFlag;
     int & escapeBackFlag = opt.escapeBackFlag;
     int & ssaoFlag = opt.ssaoFlag;
     int & raytracingFlag = opt.raytracingFlag;
@@ -280,6 +281,8 @@ struct PlayState {
     int frameRate{};
     bool smoothAnim{};
     bool animBlend{};        // [Enhancements] animblend: a clip change eased over 0.2 s (actor/pose.h)
+    bool pedVariety{};       // [Enhancements] pedvariety: each crowd walker in his own colours (o3de/pedtint.h)
+    bool pedVarietyTold{};
     omk::PoseBlend playerBlend;   // ...the player's, and a melee opponent's
     omk::PoseBlend foeBlend;
     bool escapeBack{};      // [Enhancements] escapeback: ESC/Backspace send BACK under a screen
@@ -299,7 +302,7 @@ struct PlayState {
     // LOD are put away (the renderers read `View::enhOff`; the frontend's own are checked at their use)
     bool enhShown_ = true;
     bool enhActive() const {
-        return animBlend || bestLod || vehicleShine || colourDepth >= 32 || postFx.any() || ssao || raytracing ||
+        return animBlend || pedVariety || bestLod || vehicleShine || colourDepth >= 32 || postFx.any() || ssao || raytracing ||
                rtReflections || frameGen;
     }
     bool frameGen{};         // [Enhancements] framegen: an in-between frame on the motion vectors (D3D12, Vulkan windows)

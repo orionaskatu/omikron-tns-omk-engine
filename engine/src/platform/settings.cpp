@@ -237,6 +237,12 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: animblend = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "pedvariety")) {
+            const int m = escapeBackMode(*w);
+            if (m >= 0) { s.pedVariety = m > 0; s.pedVarietySource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: pedvariety = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "framegen")) {
             const int m = escapeBackMode(*w);
             if (m >= 0) { s.frameGen = m > 0; s.frameGenSource = Settings::Source::Ini; }

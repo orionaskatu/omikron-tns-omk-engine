@@ -508,6 +508,7 @@ public:
     // the display's refresh rate, Hz, which the window layer knows (0: unknown)
     void setRefresh(int hz) { fgRefresh_ = hz; }
     bool volumetricsLive() const override { return volOn_; }
+    bool tintsBodies() const override { return true; }
     // HDR OUTPUT: what the window layer knows of the display before `init`
     // (`known`: 1 reports HDR, 0 does not, -1 not asked - then the surface's
     // offer of scRGB is all there is) and its peak luminance in nits (0: unknown)
@@ -1312,6 +1313,10 @@ private:
     VkImage          reflDepth1_ = VK_NULL_HANDLE;
     VkDeviceMemory   reflDepth1Mem_ = VK_NULL_HANDLE;
     VkImageView      reflDepth1View_ = VK_NULL_HANDLE;
+    // ...and, with the motion vectors on (`mvOn_`), the pass's third attachment: the reflection's own, never read
+    VkImage          reflMotion_ = VK_NULL_HANDLE;
+    VkDeviceMemory   reflMotionMem_ = VK_NULL_HANDLE;
+    VkImageView      reflMotionView_ = VK_NULL_HANDLE;
     VkFramebuffer    passFb_ = VK_NULL_HANDLE;   // `begin`'s target when set, `fbuf_` otherwise
     bool             waterNow_ = false;
     bool             reflectingNow_ = false;   // the reflection pass: clip below `waterY_`
@@ -5889,7 +5894,11 @@ void VulkanRenderer::begin(const omk::View& view) {
     aoVw_ = tupOn_ ? rs(view.letterboxed() ? view.vw : w_) : (view.letterboxed() ? view.vw : w_) * ss_;
     aoVh_ = tupOn_ ? rs(view.letterboxed() ? view.vh : h_) : (view.letterboxed() ? view.vh : h_) * ss_;
     // ---- FRAME GENERATION's per-frame half: the motion, the cuts and the bodies' previous poses ----
-    if (mvOn_) {
+    if (mvOn_ && passFb_) {
+        // the water reflection's pass (its vectors are never read): no cut test against the REFLECTED eye, no
+        // jitter step, no swap of the bodies' affines - those are the MAIN frame's, `begin(v)`'s after it
+        pm_.jitter[0] = pm_.jitter[1] = 0.0f;
+    } else if (mvOn_) {
         std::memcpy(curMain_, push_.mvp, sizeof curMain_);
         // THE CAMERA CUT (`o3de/framegen.h`): a jump of the engine's camera - a first frame, a resize or a new
         // set are cuts too
@@ -5945,7 +5954,7 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
         const float* from = !resetOwed_ && prev != prevAffines_.end() && prev->second.size() == n
                                 ? prev->second.data() : d.meshPose;
         std::memcpy(a + n, from, n * sizeof(float));
-        curAffines_[d.meshPose].assign(d.meshPose, d.meshPose + n);
+        if (!passFb_) curAffines_[d.meshPose].assign(d.meshPose, d.meshPose + n);   // (the reflection's are not the frame's)
         poseUsed_ += 3 * d.meshPoses * 16;
     }
     off = static_cast<uint32_t>(at);
@@ -6099,7 +6108,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
         push_.texScaleU = bound.su;
         push_.texScaleV = bound.sv;
     }
-    push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor));
+    push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor | omk::kDrawTintMask));
     if (!rtReflOn_) push_.lit &= ~omk::kDrawFloor;
     // THE FOG's two exclusions, applied here because this is where the bucket
     // key is - the same rule `renderer.cpp` applies for the software loop, and
@@ -6734,7 +6743,7 @@ void VulkanRenderer::rtNote(const omk::Draw& d) {
     const std::size_t slot = omk::drawTextureSlot(d);
     const std::uint32_t tex = rtTexWord(slot);   // the table index, with a pack's k
     const bool posed = d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size();
-    if (posed || d.castsShadow || (d.lit & ~(omk::kDrawSoft | omk::kDrawFloor)) != 0) {
+    if (posed || d.castsShadow || (d.lit & ~(omk::kDrawSoft | omk::kDrawFloor | omk::kDrawTintMask)) != 0) {
         RtBodyNote& n = rtNotes_[{posed ? d.meshPose : nullptr, d.geo}];
         n.geo = d.geo;
         if (posed && n.aff.empty()) n.aff.assign(d.meshPose, d.meshPose + 12 * d.meshPoses);

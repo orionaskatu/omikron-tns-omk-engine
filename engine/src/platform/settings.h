@@ -183,6 +183,16 @@ struct Settings {
     bool   animBlend = false;
     Source animBlendSource = Source::Default;
 
+    // `pedvariety = off|on`: each walker of the street crowd wears his own
+    // colours - the hue of his clothes turned, their saturation and brightness
+    // moved, by a hash of the area's seed and his slot - where the crowd's
+    // twelve and nine models otherwise repeat a handful of coats. The skin, the
+    // eyes and the near-black and near-white are kept; the player, the story
+    // characters and the fighters are not touched (`todo/enhancements.md` 29,
+    // `o3de/pedtint.h`).
+    bool   pedVariety = false;
+    Source pedVarietySource = Source::Default;
+
     // `escapeback = off|on`: ESCAPE and BACKSPACE also send the interface's
     // BACK (bit 0x20) while a screen is up. The original's BACK is the
     // `Annuler / Sauter` binding alone - SPACE, joystick button 49 - and ESC
@@ -671,6 +681,7 @@ inline constexpr int kMaxSoftParticles = 1;       // effect sprites faded agains
 inline constexpr int kMaxVolumetrics = 1;         // the lamps' light in the air (D3D12, Vulkan)
 inline constexpr int kMaxFrameGen = 1;            // an in-between frame on the motion vectors (D3D12, Vulkan windows)
 inline constexpr int kMaxAnimBlend = 1;           // a clip change eased out over 0.2 s
+inline constexpr int kMaxPedVariety = 1;          // each walker of the crowd in his own colours (D3D12, Vulkan)
 // NOT in `all = max`, asked for by name (`colorgrade = ...`, `hdr = on`):
 // `colorGrade` and `hdr` (verify.py: enhance all's SEPARATE)
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
@@ -743,6 +754,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.volumetrics, kMaxVolumetrics, s.volumetricsSource);
     takeFlag(s.frameGen, kMaxFrameGen, s.frameGenSource);
     takeFlag(s.animBlend, kMaxAnimBlend, s.animBlendSource);
+    takeFlag(s.pedVariety, kMaxPedVariety, s.pedVarietySource);
     // NOT `s.colorGrade` nor `s.hdr`: asked for by name only (above).
 }
 

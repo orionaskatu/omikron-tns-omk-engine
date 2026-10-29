@@ -103,18 +103,20 @@ int main(int argc, char** argv) {
     // ---- every palette of the crowd's models (distinct ones only)
     std::set<std::vector<std::uint8_t>> pals;
     int pages = 0, models = 0;
-    for (int sex = 1; sex <= 2; ++sex)
-        for (const std::string& name : omk::pedModelTable(sex)) {
-            const auto d = fs.read("MESHES/PERSOS/" + name + ".3DO");
-            const auto t = fs.read("MESHES/PERSOS/" + name + ".3DT");
-            if (d.empty() || t.empty()) continue;
-            ++models;
-            for (const auto& tx : omk::textures(d, t)) {
-                if (!tx.hasPixels()) continue;
-                ++pages;
-                pals.insert(std::vector<std::uint8_t>(tx.pal.data(), tx.pal.data() + 768));
-            }
+    const auto addModel = [&](const std::string& name) {
+        const auto d = fs.read("MESHES/PERSOS/" + name + ".3DO");
+        const auto t = fs.read("MESHES/PERSOS/" + name + ".3DT");
+        if (d.empty() || t.empty()) return;
+        ++models;
+        for (const auto& tx : omk::textures(d, t)) {
+            if (!tx.hasPixels()) continue;
+            ++pages;
+            pals.insert(std::vector<std::uint8_t>(tx.pal.data(), tx.pal.data() + 768));
         }
+    };
+    for (int sex = 1; sex <= 2; ++sex)
+        for (const std::string& name : omk::pedModelTable(sex)) addModel(name);
+    addModel("moto");   // the motos wear the same word (a bike and its rider)
     if (models == 0) { std::printf("pedtint: no crowd model found under %s\n", root.c_str()); return 1; }
 
     constexpr int kWords = 4096;
@@ -124,9 +126,27 @@ int main(int argc, char** argv) {
         h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
         words.push_back(omk::pedTintWord(h));
     }
-    long entries = 0, skin = 0, white = 0, black = 0, turn = 0;
-    long skinBad = 0, whiteBad = 0, blackBad = 0, turnBad = 0, turnWorst = kWords;
+    long entries = 0, skin = 0, white = 0, black = 0, turn = 0, grey = 0;
+    long skinBad = 0, whiteBad = 0, blackBad = 0, turnBad = 0, turnWorst = kWords, greyBad = 0, greyWorst = kWords;
     long distinctMin = 1 << 30;
+    // the complexion of a word: what the skin's value is scaled by
+    const auto toneOf = [](int w) {
+        return omk::kPedSkinBase + static_cast<float>((w >> omk::kPedTintSkinShift) & 3) * omk::kPedSkinStep;
+    };
+    // the build and the second half of the word over the 4096 looks
+    std::set<int> toneCodes, spreadCodes, phaseCodes;
+    float scaleMin = 9.0f, scaleMax = 0.0f;
+    for (int i = 0; i < kWords; ++i) {
+        std::uint32_t h = static_cast<std::uint32_t>(i) * 0x9E3779B1u + 12345u;
+        h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
+        const int w = omk::pedTintWord(h);
+        toneCodes.insert((w >> omk::kPedTintSkinShift) & 3);
+        spreadCodes.insert((w >> omk::kPedTintSpreadShift) & 15);
+        phaseCodes.insert((w >> omk::kPedTintPhaseShift) & 7);
+        const float s = omk::pedScale(h);
+        scaleMin = std::min(scaleMin, s);
+        scaleMax = std::max(scaleMax, s);
+    }
     for (const auto& pal : pals) {
         for (int e = 0; e < 256; ++e) {
             float c[3];
@@ -137,9 +157,11 @@ int main(int argc, char** argv) {
             const bool isWhite = hv.v >= 0.9f && hv.s <= 0.05f;
             const bool isBlack = hv.v < 0.08f;
             const bool isTurn = hv.s > 0.2f && hv.v > 0.2f && hv.h >= 100.0f && hv.h <= 330.0f;
-            if (!(isSkin || isWhite || isBlack || isTurn)) continue;
-            skin += isSkin; white += isWhite; black += isBlack; turn += isTurn;
-            long moved = 0;
+            // a GREY cloth (no hue to turn): the dye's business
+            const bool isGrey = hv.s < 0.06f && hv.v > 0.25f && hv.v < 0.6f;
+            if (!(isSkin || isWhite || isBlack || isTurn || isGrey)) continue;
+            skin += isSkin; white += isWhite; black += isBlack; turn += isTurn; grey += isGrey;
+            long moved = 0, dyed = 0;
             std::set<std::uint32_t> distinct;
             for (const int w : words) {
                 float o[3];
@@ -147,15 +169,27 @@ int main(int argc, char** argv) {
                 int dmax = 0;
                 for (int k = 0; k < 3; ++k) dmax = std::max(dmax, std::abs(byteOf(o[k]) - byteOf(c[k])));
                 distinct.insert(static_cast<std::uint32_t>(byteOf(o[0]) | byteOf(o[1]) << 8 | byteOf(o[2]) << 16));
-                if (isSkin && dmax != 0) ++skinBad;
+                // skin: exactly the shipped one under the neutral complexion, and the shipped one
+                // x the complexion's value factor under the others (a hue turn would break both)
+                if (isSkin) {
+                    const float f = toneOf(w);
+                    int bad = 0;
+                    for (int k = 0; k < 3; ++k) bad = std::max(bad, std::abs(byteOf(o[k]) - byteOf(c[k] * f)));
+                    if (bad > 1) ++skinBad;
+                }
                 if (isWhite && dmax != 0) ++whiteBad;
                 if (isBlack && std::max(o[0], std::max(o[1], o[2])) >= 0.2f) ++blackBad;
                 if (isTurn && dmax >= 6) ++moved;
+                if (isGrey && dmax >= 6) ++dyed;
             }
             if (isTurn) {
                 turnWorst = std::min(turnWorst, moved);
                 if (moved * 10 < static_cast<long>(kWords) * 9) ++turnBad;
                 distinctMin = std::min(distinctMin, static_cast<long>(distinct.size()));
+            }
+            if (isGrey) {
+                greyWorst = std::min(greyWorst, dyed);
+                if (dyed * 2 < static_cast<long>(kWords)) ++greyBad;
             }
         }
     }
@@ -164,6 +198,10 @@ int main(int argc, char** argv) {
     std::printf("pedtint skin_violations %ld white_violations %ld black_violations %ld\n", skinBad, whiteBad, blackBad);
     std::printf("pedtint turned_entries_moving_under_90pct %ld (worst %ld of %d) distinct_colours_min %ld\n",
                 turnBad, turnWorst, kWords, distinctMin == (1 << 30) ? 0L : distinctMin);
+    std::printf("pedtint grey_entries %ld grey_entries_dyed_under_half %ld (worst %ld of %d)\n", grey, greyBad, greyWorst, kWords);
+    std::printf("pedtint tone_codes %zu spread_codes %zu phase_codes %zu scale_min %.3f scale_max %.3f\n",
+                toneCodes.size(), spreadCodes.size(), phaseCodes.size(), static_cast<double>(scaleMin),
+                static_cast<double>(scaleMax));
 
     // ---- the walkers' looks: Anekbah (area 0), by the area header's masks
     const auto areaFile = fs.read("IAM/AREA");

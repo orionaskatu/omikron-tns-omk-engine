@@ -676,6 +676,22 @@ const float kPedValStep = 0.035;
 const float kPedChromaCap0 = 0.35;
 const float kPedChromaCap1 = 0.90;
 const float kPedChromaCapBy = 0.45;
+const float kPedSpreadMax = 0.27;
+const float kPedPhaseStep = 0.125;
+const float kPedSkinBase = 0.78;
+const float kPedSkinStep = 0.11;
+const float kPedDyeMax = 0.30;
+const float kPedDyeS0 = 0.08;
+const float kPedDyeS1 = 0.35;
+const float kPedDyeV0 = 0.10;
+const float kPedDyeV1 = 0.25;
+const float kPedDyeLuma = 3.0;
+const float kPedScaleMin = 0.93;
+const float kPedScaleMax = 1.07;
+vec3 pedHueRgb(float h) {
+    float x = (h - floor(h)) * 6.0;
+    return clamp(vec3(abs(x - 3.0) - 1.0, 2.0 - abs(x - 2.0), 2.0 - abs(x - 4.0)), 0.0, 1.0);
+}
 vec3 pedTint(vec3 c, int word) {
     float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
     float d = mx - mn;
@@ -692,10 +708,19 @@ vec3 pedTint(vec3 c, int word) {
     float dark = 1.0 - smoothstep(kPedDarkV0, kPedDarkV1, mx);
     float ws = smoothstep(kPedSatLow0, kPedSatLow1, s) *
                (1.0 - smoothstep(kPedSatHigh0 + kPedDarkBy * dark, kPedSatHigh1 + kPedDarkBy * dark, s));
+    float skin = wh * ws;
     float white = smoothstep(kPedWhiteV0, kPedWhiteV1, mx) * (1.0 - smoothstep(kPedWhiteS0, kPedWhiteS1, s));
-    float prot = max(wh * ws, white);
-    if (prot >= 1.0) return c;
-    float a = float((word >> 6) & 255) * (6.28318530718 / 256.0);
+    float prot = max(skin, white);
+    // the complexion: what is kept as skin has its value scaled (code 2 is the shipped skin)
+    float tone = kPedSkinBase + float((word >> 29) & 3) * kPedSkinStep;
+    float toneMul = 1.0 + (tone - 1.0) * skin * (1.0 - white);
+    vec3 kept = clamp(c * toneMul, 0.0, 1.0);
+    if (prot >= 1.0) return kept;
+    // the turn leans by the pixel's own hue (the spread), so two garments are not turned alike
+    float base = float((word >> 6) & 255) / 256.0;
+    float spread = (float((word >> 22) & 15) - 7.5) / 7.5 * kPedSpreadMax;
+    float phase = float((word >> 26) & 7) * kPedPhaseStep;
+    float a = (base + spread * sin(6.28318530718 * (h + phase))) * 6.28318530718;
     float cs = cos(a), sn = sin(a);
     float k = (1.0 - cs) / 3.0, q = 0.57735026919 * sn;
     vec3 o = vec3((cs + k) * c.r + (k - q) * c.g + (k + q) * c.b,
@@ -704,12 +729,19 @@ vec3 pedTint(vec3 c, int word) {
     // the turn keeps the mean of the three, not the luma: put the luma back
     float y0 = dot(c, vec3(0.299, 0.587, 0.114));
     o = clamp(o + (y0 - dot(o, vec3(0.299, 0.587, 0.114))), 0.0, 1.0);
-    float sc = kPedSatBase + float((word >> 14) & 15) * kPedSatStep;
+    float satCode = float((word >> 14) & 15);
+    float sc = kPedSatBase + satCode * kPedSatStep;
     sc *= 1.0 - kPedChromaCapBy * smoothstep(kPedChromaCap0, kPedChromaCap1, s);
     float vc = kPedValBase + float((word >> 18) & 15) * kPedValStep;
     float y = dot(o, vec3(0.299, 0.587, 0.114));
-    o = clamp((y + (o - y) * sc) * vc, 0.0, 1.0);
-    return o * (1.0 - prot) + c * prot;
+    // the dye: a grey cloth (low saturation, not black) has no hue to turn - a chroma is
+    // added along a hue that follows the grey's own brightness
+    float wDye = (1.0 - smoothstep(kPedDyeS0, kPedDyeS1, s)) * smoothstep(kPedDyeV0, kPedDyeV1, mx);
+    vec3 dye = pedHueRgb(base + spread * sin(6.28318530718 * (kPedDyeLuma * y0 + phase)));
+    float dyeY = dot(dye, vec3(0.299, 0.587, 0.114));
+    float dyeBy = kPedDyeMax * (satCode / 15.0) * wDye * y0 * 1.5;
+    o = clamp((y + (o - y) * sc + (dye - dyeY) * dyeBy) * vc, 0.0, 1.0);
+    return o * (1.0 - prot) + kept * prot;
 }
 
 void main() {

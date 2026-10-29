@@ -294,12 +294,13 @@
 ;
 ; PEDVARIETY - the street crowd wears twelve men's and nine women's models and
 ; each has one texture, so 200 walkers share a handful of coats. `on` gives
-; every walker his own colours: the hue of his clothes turned, their saturation
-; and brightness moved (a muted range, never a neon one), by a hash of the
-; area's seed and his slot - he keeps them while he walks, the next visit to the
-; street dresses the crowd differently. Skin, hair in a skin tone, the eyes and
-; teeth and the near-blacks are kept; the player, the story characters and the
-; fighters are not touched. Applied by the shader on whatever texture is drawn,
+; every walker his own look: each garment's hue turned on its own, grey coats
+; dyed, saturation and brightness moved (a muted range, never a neon one), a
+; complexion for the skin and a build (93 to 107% of the height) - and the
+; motorbikes and their riders likewise - by a hash of the area's seed and the
+; slot: he keeps his look while he is there, the next visit to the street
+; dresses the crowd differently. The eyes and teeth and the near-blacks are
+; kept; the player, the story characters and the fighters are not touched. Applied by the shader on whatever texture is drawn,
 ; so a texture pack's replacements show in the new colours. Direct3D 12 and
 ; Vulkan; the original/remaster switch puts it away. In `all = max`.
 ; `todo/enhancements.md` 29. `--ped-variety`.

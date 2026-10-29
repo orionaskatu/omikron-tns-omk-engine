@@ -433,6 +433,7 @@ struct PedJob {
 struct PedStaged {
     CharModel* mo = nullptr;
     std::uint32_t look = 0;          // [Enhancements] pedvariety: the walker's `Pedestrian::look`
+    float scale = 1.0f;              // ...and his build (`pedScale`): 1 unless pedvariety shows
     // A crowd model carries FOUR skeletons - `PhBassin`, `PiBassin`, ...,
     // the LOD sub-objects `sub_453A70` splits it into (76 meshes in
     // PSH_FN, 19 a skeleton) - and the library's tracks name the first.
@@ -499,6 +500,7 @@ struct PedStaged {
 // the geometry is composed once at rest and only transformed per frame.
 struct VehStaged {
     CharModel* mo = nullptr;
+    std::uint32_t look = 0;    // [Enhancements] pedvariety: the rider's `Pedestrian::look` (the motos' colours)
     std::string model;         // the model `mo` was taken for - a slot is REUSED
 
     // the chosen sub-object, composed, in model space - SHARED by every

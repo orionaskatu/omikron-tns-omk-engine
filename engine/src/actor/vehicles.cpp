@@ -159,6 +159,13 @@ bool Sliders::spawnVehicle(int lane, const float at[3], const float dir[3],
     m.live = true;
     m.vehicle = slot;
     m.model = v.model;
+    // the rider's look (`Pedestrian::look`), as the walkers' - the area's seed and the
+    // slot, no draw from `rng_` - for the motos' colours (`pedvariety`)
+    {
+        std::uint32_t h = seed_ ^ (static_cast<std::uint32_t>(mi) * 0x9E3779B1u);
+        h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
+        m.look = h;
+    }
     // `u32i(v7, 13) = u32i(v7, 14) = 256.0` - the mover's +52 and +56. For a
     // vehicle +52 is the BODY's live speed, which `sub_456C70` accelerates,
     // and +56 is the carrot's, which the gait sets from it each frame. (For a

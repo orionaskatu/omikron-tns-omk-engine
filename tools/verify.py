@@ -7712,13 +7712,15 @@ def c_crowd_variety():
       off` beside it beats that;
     * THE SHADER AND THE HEADER AGREE: the `kPed*` constants of `pedtint.h` and
       of `scene.frag` are the same numbers, and the bits the shader unpacks
-      (`pc.lit & 32`, `>> 6`, `>> 14`, `>> 18`) are the header's;
+      (`pc.lit & 32`, `>> 6`, `>> 14`, `>> 18`, `>> 22`, `>> 26`, `>> 29`) are the header's;
     * THE COLOURS, over every page of the 21 crowd models (`pedtint_probe`, the
       palette entries being the colours a palettised page can show) and 4096
-      words: skin (hue 5..45, saturation 0.2..0.55) exactly kept, near-white
+      words: skin (hue 5..45, saturation 0.2..0.55) kept - exactly, or its value
+      scaled by the word's complexion (4 of them, one the shipped skin), near-white
       kept, near-black still black, the colours meant to be turned (green to
       magenta) changed by at least 6/255 in 90% of the words and into over a
-      thousand distinct colours - and the probe run with the skin rule off
+      thousand distinct colours, the grey cloths dyed (over half the words move
+      them 6/255) - and the probe run with the skin rule off
       (`--break`) reports the skin violations, which is the failure the check
       is for;
     * THE WALKERS' LOOKS: Anekbah's 200 walkers wear 200 distinct words, two
@@ -7751,7 +7753,10 @@ def c_crowd_variety():
                    os.path.join(eng, "src", "o3de", "renderer.h"), encoding="utf-8").read() and
                ("(word >> %d) & 255" % shifts.get("kPedTintHueShift", -1)) in frag and
                ("(word >> %d) & 15" % shifts.get("kPedTintSatShift", -1)) in frag and
-               ("(word >> %d) & 15" % shifts.get("kPedTintValShift", -1)) in frag)
+               ("(word >> %d) & 15" % shifts.get("kPedTintValShift", -1)) in frag and
+               ("(word >> %d) & 15" % shifts.get("kPedTintSpreadShift", -1)) in frag and
+               ("(word >> %d) & 7" % shifts.get("kPedTintPhaseShift", -1)) in frag and
+               ("(word >> %d) & 3" % shifts.get("kPedTintSkinShift", -1)) in frag)
     same_consts = len(hc) >= 15 and hc == sc
     mk = subprocess.run(["make", "-s", "build/settings_probe", "build/pedtint_probe", "play"], cwd=eng,
                         capture_output=True, text=True)

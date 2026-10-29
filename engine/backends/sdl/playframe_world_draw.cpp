@@ -365,10 +365,11 @@ void PlayState::worldDrawLists() {
     const bool pedTintOn = pedVariety && enhShown_ && world_ && world_->tintsBodies();
     if (pedTintOn && !pedVarietyTold) {
         pedVarietyTold = true;
-        std::printf("pedvariety: on - an ENHANCEMENT: each crowd walker in his own colours (clothes "
-                    "turned in hue, saturation and brightness by a hash of the area's seed and his "
-                    "slot; skin, eyes and near-black/near-white kept) - a word in the draw, "
-                    "applied by the shader on the shipped or the pack's texels\n");
+        std::printf("pedvariety: on - an ENHANCEMENT: each crowd walker (and each moto with its rider) in "
+                    "his own look - clothes turned per garment in hue, saturation and brightness, "
+                    "grey cloth dyed, a complexion, a build of 93-107%% height - by a hash of the "
+                    "area's seed and his slot; eyes and near-black/near-white kept - a word in the "
+                    "draw, applied by the shader on the shipped or the pack's texels\n");
     }
     for (const auto& up : crowd.staged) {
         if (!up->drawn || !up->mo) continue;
@@ -396,6 +397,15 @@ void PlayState::worldDrawLists() {
                              &up->posed, b.start, b.count, b.blend, b.cutout,
                              litPed, castShadows});
     }
+    // ...and the MOTOS' (a rider and his bike, `look` from the mover): the bike's paint and the
+    // rider's clothes turned, his skin kept. The sliders, the hover-taxis, keep their livery.
+    const auto motoTint = [&](const auto& up) {
+        if (!pedTintOn || up->model.size() < 4) return 0;
+        static const char n[] = "moto";
+        for (std::size_t i = 0; i < 4; ++i)
+            if (std::tolower(static_cast<unsigned char>(up->model[i])) != n[i]) return 0;
+        return omk::pedTintWord(up->look);
+    };
     for (const auto& up : traffic.staged) {
         if (!up->drawn || !up->mo) continue;
         const int base = static_cast<int>(up->mo->texBase);
@@ -404,7 +414,7 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->atRest, b.start, b.count, b.blend, b.cutout,
-                                 litTraffic | shine(up), castShadows});
+                                 litTraffic | shine(up) | motoTint(up), castShadows});
                 draws.back().meshPose = up->affine.data();
                 draws.back().meshPoses = up->mo->meshes.size();
             }
@@ -414,7 +424,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litTraffic | shine(up), castShadows});
+                             litTraffic | shine(up) | motoTint(up), castShadows});
     }
     // which path drew him, said when it changes - and counted, for the
     // runs that compare the two

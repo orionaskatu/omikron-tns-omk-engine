@@ -5,6 +5,7 @@
 #include "playframe.h"
 #include "platform/env.h"
 #include "o3de/vecmath.h"
+#include "o3de/pedtint.h"
 
 #include <atomic>
 
@@ -249,19 +250,21 @@ void PlayState::worldCrowdPedestrians() {
                     // the placement below, as a 3x4 folded into each
                     // mesh's affine: x' = cs (x - rx) - sn (z - rz) + bx,
                     // z' = sn (x - rx) + cs (z - rz) + bz, y' = y + lift
+                    // (`pedvariety`'s build: a uniform scale s about his feet - 1 when it is off)
+                    const float s = p.scale;
                     const float place[12] = {
-                        wcs, 0.0f, -wsn, w.body[0] - (wcs * rootXZ[0] - wsn * rootXZ[1]),
-                        0.0f, 1.0f, 0.0f, w.body[1] + w.footY - p.feet,
-                        wsn, 0.0f, wcs, w.body[2] - (wsn * rootXZ[0] + wcs * rootXZ[1])};
+                        s * wcs, 0.0f, -s * wsn, w.body[0] - s * (wcs * rootXZ[0] - wsn * rootXZ[1]),
+                        0.0f, s, 0.0f, w.body[1] + w.footY - s * p.feet,
+                        s * wsn, 0.0f, s * wcs, w.body[2] - s * (wsn * rootXZ[0] + wcs * rootXZ[1])};
                     omk::meshAffines(p.mo->meshes, pose, place, p.affine);
                 }
                 if (!p.gpu) for (auto& c : p.posed.corners) {
                     const float in[3] = {c.x - rootXZ[0], c.y, c.z - rootXZ[1]};
                     float r[3];
                     omk::rotateYawCS(wcs, wsn, in, r);
-                    c.x = r[0] + w.body[0];
-                    c.y = r[1] + w.body[1] + w.footY - p.feet;
-                    c.z = r[2] + w.body[2];
+                    c.x = r[0] * p.scale + w.body[0];
+                    c.y = (c.y - p.feet) * p.scale + w.body[1] + w.footY;
+                    c.z = r[2] * p.scale + w.body[2];
                     // the normal turns with the walker and does not move
                     const float n[3] = {c.nx, c.ny, c.nz};
                     float rn[3];
@@ -827,6 +830,8 @@ void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool c
         PedStaged& p = *crowd.staged[i];
         p.drawn = false;
         p.look = w.look;
+        // his build, with his colours (`pedvariety`, where the renderer tints bodies)
+        p.scale = pedVariety && enhShown_ && world_ && world_->tintsBodies() ? omk::pedScale(w.look) : 1.0f;
         if (!w.live || !w.clip || crowd.ani.empty()) continue;
         ++crowd.live;
         if (w.flags & 0x80u) ++crowd.inAction;
@@ -975,6 +980,7 @@ void PlayState::worldCrowdVehicles(const std::vector<omk::Vehicle>& vs, const om
         };
         if (!v.live || v.mover < 0) { skipMine(1, "not live / no mover"); continue; }
         const auto& m = pd.movers()[static_cast<std::size_t>(v.mover)];
+        sv.look = m.look;
         ++traffic.live;
         if (m.flags & 0x100u) ++traffic.stopped;
         // ...and the traffic the same way - but NOT the player's own slider

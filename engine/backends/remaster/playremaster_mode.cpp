@@ -7,8 +7,7 @@
 // Everything the remaster needs is ARMED at start whatever the mode
 // (`remasterSetup`), so the switch moves only what a frame reads: the
 // strengths to 0 and back (held in `remasterHeld_`), the three packs hidden
-// (`setShown`) and the world's textures uploaded again, the emitters' lights
-// taken out of the sets' tables, the grade, the films, the rounded bodies'
+// (`setShown`) and the world's textures uploaded again, the grade, the films, the rounded bodies'
 // rests swapped with the flat ones kept beside them. Outside it: the upscale
 // and the preload radius (a frame rate's choices, not a look).
 #if OMK_REMASTER
@@ -16,7 +15,6 @@
 #include "../sdl/playstate.h"
 
 #include "o3de/colourgrade.h"
-#include "o3de/emitterlight.h"
 #include "o3de/texpack.h"
 #include "platform/events.h"
 #include "platform/options.h"
@@ -27,7 +25,7 @@
 
 namespace {
 // the strengths the switch holds - each read by the frame
-constexpr const char* kHeld[] = {"bloom", "water", "floors", "wet", "rain3d", "mist", "relief", "ao", "bodylight", "fxlight"};
+constexpr const char* kHeld[] = {"bloom", "water", "floors", "wet", "rain3d", "mist", "ao"};
 }  // namespace
 
 float* PlayState::remasterStrength(const std::string& key) {
@@ -37,10 +35,7 @@ float* PlayState::remasterStrength(const std::string& key) {
     if (key == "wet") return &wetStrength;
     if (key == "rain3d") return &rain3dStrength;
     if (key == "mist") return &mistStrength;
-    if (key == "relief") return &relief;
     if (key == "ao") return &aoStrength;
-    if (key == "bodylight") return &bodyLight;
-    if (key == "fxlight") return &fxLight;
     return nullptr;
 }
 
@@ -64,27 +59,6 @@ bool PlayState::remasterSwitchable() const {
     if (enhActive()) return true;   // OMK's enhancements are switched too (`enhShown_`)
     return omk::texturePack().active() || omk::uiPack().active() || omk::fontPack().active() ||
            omk::cityGrades().active();
-}
-
-// a set's lights as the mode wants them: its own, then - the remaster's - its
-// glowing surfaces and, in the set the scene's emitters are bound into, their
-// point lights (`remasterEmitterLights`)
-void PlayState::remasterSlotLights(WorldSlot& ws, bool emitters) {
-    const bool want = fxLight > 0.0f && world_ && world_->drawsEmitterLights();
-    ws.lights.resize(ws.setLights);
-    ws.fxIn = want;
-    if (!want) return;
-    ws.lights.insert(ws.lights.end(), ws.fxSurface.begin(), ws.fxSurface.end());
-    if (!emitters || !session_) return;
-    omk::EmitterLightCount n;
-    const auto fl = omk::emitterLights(
-        session_->scene().effects(), [&](int id) { return sprites.tab.texOf(id); }, fxLight, &n);
-    ws.lights.insert(ws.lights.end(), fl.begin(), fl.end());
-    std::printf("fx light: %s - %d glows and %d flames of %d emitters light the bodies "
-                "(%zu set lights)\n", ws.stem.c_str(), n.glows, n.flames,
-                n.glows + n.flames + n.dark, ws.setLights);
-    omk::event("world.fxlights", {{"set", ws.stem}, {"glows", n.glows}, {"flames", n.flames},
-                                  {"dark", n.dark}});
 }
 
 // THE SWITCH. False, said once, when nothing was armed to switch.
@@ -129,7 +103,6 @@ bool PlayState::remasterShow(bool on, const char* why) {
             retextured = true;
         }
     }
-    remasterSlotsFrame(true);
     remasterSwapBodies(on);   // the rounded bodies (B2, `playremaster_bodies.cpp`)
     gradeFor = "\x01";   // `remasterGrade` chooses again
     std::printf("remaster: %s - the %s mode%s\n", why, on ? "remaster" : "original",
@@ -137,20 +110,6 @@ bool PlayState::remasterShow(bool on, const char* why) {
     omk::event("remaster.mode", {{"mode", std::string(on ? "remaster" : "original")}, {"why", std::string(why)},
                                  {"taken", true}, {"retextured", retextured}});
     return true;
-}
-
-// each set's lights brought to the mode - all of them on a switch, else the
-// ones a load in flight across it prepared the other way
-void PlayState::remasterSlotsFrame(bool all) {
-    if (!session_) return;
-    const bool want = fxLight > 0.0f && world_ && world_->drawsEmitterLights();
-    bool emitters = session_->scene().loaded() && session_->scene().setEmittersBound();
-    for (WorldSlot& ws : worldSlots) {
-        if (ws.stem.empty()) continue;
-        const bool bound = emitters && ws.area == session_->sceneArea();
-        if (bound) emitters = false;   // the first of its area, as the binding takes it
-        if (all || ws.fxIn != want) remasterSlotLights(ws, bound);
-    }
 }
 
 // EACH FRAME, beside ESC's read (`inputPause`; `down`: F10 = DIK 0x44 in the
@@ -171,7 +130,6 @@ void PlayState::remasterModeFrame(bool down) {
         if (omkOpened_) omkOptionsOpen();   // the Mode row, should the menu be up
     }
     remasterKeyDown_ = down;
-    remasterSlotsFrame(false);
 }
 
 #endif  // OMK_REMASTER

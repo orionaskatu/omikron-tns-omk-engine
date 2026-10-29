@@ -97,7 +97,6 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_SWEEP_GRID",        // A/B: the body and camera sweeps as a linear scan instead of through the grids
     "OMK_NO_TIE",               // the coincident-face depth tie off (engine: sign tie)
     "OMK_NO_TIE_BAKE",          // A/B: the depth tie per frame instead of baked (engine: gles tie bake)
-    "OMK_NO_TILES",             // the tiled point lights off: the nearest 60 instead (engine: emitter light)
     "OMK_NO_VEIL",              // =1 the rain's distant veils left out, the rest of the remaster's rain kept (engine: rain 3d)
     "OMK_NO_WET_BODIES",        // =1 the bodies stay dry in the rain (engine: wet floors)
     "OMK_NO_WET_WALLS",         // =1 the rain wets the floors alone, no wall (engine: wet floors)
@@ -114,7 +113,6 @@ constexpr const char* kSwitches[] = {
     "OMK_PRESENT_CHECK",        // GLES: the row-by-row present compared with the whole one
     "OMK_PRESENT_ROWS",         // GLES: the present row by row always - the Vita's path on a desktop
     "OMK_PROGYAW_NEG",          // diagnostic: a scene call's Euler applied with its sign turned
-    "OMK_REFL_UNLIT",           // Vulkan: the water/floor reflection without its own tiled lights, as before (engine: floors)
     "OMK_ROOTSPIN_NEG",         // diagnostic: a scene clip's root delta turned the other way, the body left alone
     "OMK_RT_NO_INDIRECT",       // A/B: raytracing without the indirect light on characters (engine: raytracing)
     "OMK_RT_REFL_TUNE",         // rt reflections: =<strength>,<F0>,<reach>,<roughness>,<wet share>,<emissive boost>, by eye
@@ -133,7 +131,6 @@ constexpr const char* kSwitches[] = {
     "OMK_TEXTURE_PACK",         // =<dir> run_vulkan / gles_probe: the texture pack (engine: texture pack)
     "OMK_TIE_LOG",              // log: the depth tie's decisions per upload (engine: gles tie bake)
     "OMK_TIE_STATS",            // log: how each large geometry's revisions were answered, every 30 frames (engine: dirty corners)
-    "OMK_TILES_LOOSE",          // the tiled lights binned without their box test or cap (engine: emitter light)
     "OMK_TRACE_ACTOR",          // =<actor> log: that body's placement and pose source every frame (program placement)
     "OMK_TRACE_MOTION",         // log: each moving mesh's motion as it is applied
     "OMK_TRANSIENT_MOTIONS",    // A/B: a scene's mesh motions per tick - the old, wrong reading (engine: node rest)

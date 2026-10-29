@@ -73,7 +73,6 @@
 #include "o3de/rtscene.h"
 #include "o3de/texpack.h"
 #include "o3de/colourgrade.h"
-#include "o3de/lighttiles.h"
 #include "o3de/fsrcon.h"
 #include "upscale_vk.h"
 #include "platform/events.h"
@@ -164,18 +163,10 @@ const uint32_t kFgSplatFrag[] =
 const uint32_t kFgResolveFrag[] =
 #include "fg_resolve.frag.inc"
 ;
-// ...and with the TILED point lights (`o3de/lighttiles.h`): its own module,
-// bound only on a frame whose tiles are on (`scene.frag`, -DOMK_TILED)
-const uint32_t kFragTiled[] =
-#include "scene_tiled.frag.inc"
-;
-// ...and both with the CUTOUT's late depth (`scene.frag` OMK_LATE_DEPTH): the
-// opaque cutout draws' modules
+// ...and with the CUTOUT's late depth (`scene.frag` OMK_LATE_DEPTH): the
+// opaque cutout draws' module
 const uint32_t kFragCut[] =
 #include "scene_cut.frag.inc"
-;
-const uint32_t kFragTiledCut[] =
-#include "scene_tiled_cut.frag.inc"
 ;
 const uint32_t kFsqVert[] =
 #include "fsq.vert.inc"
@@ -275,16 +266,16 @@ struct GpuLightStd140 {
     float colourI[4];   // rgb colour 0..1, a intensity
 };
 struct LightUbo {
-    GpuLightStd140 l[omk::View::kMaxGpuLights];   // 8 the set's, the rest the remaster's points
+    GpuLightStd140 l[omk::View::kMaxGpuLights];
     int32_t count;
     float   base;      // View::litBase, in the std140 padding that was here
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151) - padding too
-    int32_t tiles;     // 1: the TILED point lights (`o3de/lighttiles.h`) are bound - padding once
+    int32_t pad0;      // unused: std140 puts the vec4 below on a 16-byte boundary
     // THE WATER's Fresnel (`todo/remaster.md` A3): the eye, at 3088. Written by
     // every `begin`, and the frame's own pass is the last one - the only one
     // that reads it (the reflection pass draws no water)
     float   eye[4];
-    // THE RELIEF (`View::relief`), at 3104: read by the TILED module alone
+    // x unused; y, z, w the MIST (`View::mist`, `mistGround`, `mistHeight`)
     float   fx[4];
     // THE SAND'S DUST (`View::dust`, the restored weather's, the remaster's), at
     // 3120: strength, the drift's x and z, the distance scale; its colour at 3136
@@ -296,11 +287,11 @@ struct LightUbo {
     float   veilColour[4];
     float   soft[4];   // SOFT PARTICLES (`scene.frag` -DOMK_SOFT): A, B, 1 / the fade's range
 };
-// the offsets `scene.frag`'s block reads them at (std140: 64 lights of 48
-// bytes, four scalars, then the two vec4s)
-static_assert(offsetof(LightUbo, eye) == 3088 && offsetof(LightUbo, fx) == 3104 &&
-              offsetof(LightUbo, dust) == 3120 && offsetof(LightUbo, dustColour) == 3136 &&
-              offsetof(LightUbo, veil) == 3152 && offsetof(LightUbo, veilColour) == 3168,
+// the offsets `scene.frag`'s block reads them at (std140: 8 lights of 48
+// bytes, four scalars, then the vec4s)
+static_assert(offsetof(LightUbo, eye) == 400 && offsetof(LightUbo, fx) == 416 &&
+              offsetof(LightUbo, dust) == 432 && offsetof(LightUbo, dustColour) == 448 &&
+              offsetof(LightUbo, veil) == 464 && offsetof(LightUbo, veilColour) == 480,
               "the Lights block's layout is scene.frag's");
 
 // Up to three mapped shadows a frame, one per LAYER of the shadow image: the
@@ -429,18 +420,7 @@ public:
     bool posesBodies() const override { return poseDs_ != VK_NULL_HANDLE; }
     int maxVertexLights() const override { return poseDs_ != VK_NULL_HANDLE ? kPoseLights : 0; }
     bool setWater(float) override { return true; }   // nothing to build ahead
-    bool setBodyTint(bool) override { return true; }  // the pose block always carries it
-    bool drawsBodyTint() const override { return true; }
-    // scene.frag takes a point light always; ON says the frame will send the
-    // emitters' lights, and only then are the tiled lights' buffers made (32 MB)
-    bool setEmitterLights(bool on) override { emitters_ = on; return true; }
-    bool drawsEmitterLights() const override { return true; }
     bool takesPack() const override { return true; }
-    bool drawsRelief() const override { return true; }
-    int maxPixelLights() const override { return omk::View::kMaxGpuLights; }
-    bool tilesLights() const override {
-        return pointsBuf_ != VK_NULL_HANDLE && tilesBuf_ != VK_NULL_HANDLE && pipeTiled_[0] != VK_NULL_HANDLE;
-    }
     bool drawsWater() const override { return true; }
     bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
                         std::span<const omk::Draw> above, std::span<const omk::Draw> water,
@@ -459,8 +439,8 @@ public:
     unsigned takes() const override {
         return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
                omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesUpscale |
-               omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater | omk::kTakesBodyTint |
-               omk::kTakesEmitterLights | omk::kTakesAmbientOcclusion | omk::kTakesRelief | omk::kTakesMist | omk::kTakesRain3d |
+               omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater |
+               omk::kTakesAmbientOcclusion | omk::kTakesMist | omk::kTakesRain3d |
                omk::kTakesTrilinear;
     }
     ~VulkanRenderer() override;
@@ -841,18 +821,15 @@ private:
     VkDescriptorPool      dpool_ = VK_NULL_HANDLE;
     VkPipelineLayout      plo_ = VK_NULL_HANDLE;
     VkPipeline            pipe_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
-    VkPipeline            pipeTiled_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};   // the tiled module's
     // an OPAQUE CUTOUT draw's: its depth written by the shader, so a discarded
-    // keyed texel writes none (`scene.frag` OMK_LATE_DEPTH) - plain and tiled
-    VkPipeline            pipeCut_ = VK_NULL_HANDLE, pipeTiledCut_ = VK_NULL_HANDLE;
+    // keyed texel writes none (`scene.frag` OMK_LATE_DEPTH)
+    VkPipeline            pipeCut_ = VK_NULL_HANDLE;
     // THE FLOORS' REFLECTION at ONE sample when the frame has MSAA: its own
     // render pass and the scene pipelines again at 1 sample (a pipeline's
     // count is fixed) - the reflection's per-fragment lights ran four times a
-    // pixel for an image the relief blurs anyway. The water's keeps the MSAA.
+    // pixel for an image the floors' blur hides anyway. The water's keeps the MSAA.
     VkRenderPass          reflPass1_ = VK_NULL_HANDLE;
     VkPipeline            pipe1_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
-    VkPipeline            pipeTiled1_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
-    bool                  tilesNow_ = false;   // this frame's tiles are on: the tiled pipelines
     // The mirror pass's three extra states. `pipeStencil_` marks the mirror's
     // pixels, `pipeDepthReset_` clears depth inside that mark, and `pipeRefl_`
     // is `pipe_` again with the stencil TEST on so the reflection lands only
@@ -872,24 +849,10 @@ private:
     VkPipeline      shPipe_ = VK_NULL_HANDLE;  VkPipelineLayout shPlo_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout dsl1_ = VK_NULL_HANDLE;
     VkDescriptorSet       ds1_  = VK_NULL_HANDLE;
-    VkDescriptorSet       ds1Refl_ = VK_NULL_HANDLE;   // ...the water reflection's: its own tiles
-    omk::LightTiles       tilesRefl_;                  // ...binned for the reflected camera
     VkBuffer        shUbo_ = VK_NULL_HANDLE;   VkDeviceMemory shUboMem_ = VK_NULL_HANDLE;
     void*           shUboPtr_ = nullptr;
     VkBuffer        litUbo_ = VK_NULL_HANDLE;  VkDeviceMemory litUboMem_ = VK_NULL_HANDLE;
     void*           litUboPtr_ = nullptr;
-    // THE TILED POINT LIGHTS (`o3de/lighttiles.h`), set 1's bindings 3 and 4:
-    // every point light of the frame, then the tiles' lists - host-visible,
-    // written each frame as the lights UBO is
-    static constexpr VkDeviceSize kPointsBytes = omk::kMaxPoints * sizeof(GpuLightStd140);
-    static constexpr VkDeviceSize kTileWordsMax = 1u << 22;   // 16 MB: 64 x 40-odd tiles x 16 slices x 48, and room
-    VkBuffer        pointsBuf_ = VK_NULL_HANDLE; VkDeviceMemory pointsMem_ = VK_NULL_HANDLE;
-    void*           pointsPtr_ = nullptr;
-    VkBuffer        tilesBuf_ = VK_NULL_HANDLE;  VkDeviceMemory tilesMem_ = VK_NULL_HANDLE;
-    void*           tilesPtr_ = nullptr;
-    bool            emitters_ = false;   // `setEmitterLights`: the two buffers above made at init
-    omk::LightTiles tiles_;
-    bool            tilesTold_ = false, tilesOverTold_ = false;
     // The command buffer is opened by whichever of `shadowPass` and `begin`
     // runs first, and only once - the depth pass has to be recorded BEFORE the
     // frame's own render pass begins.
@@ -931,15 +894,10 @@ private:
         // when there is none)
         VkImage emImg = VK_NULL_HANDLE; VkDeviceMemory emMem = VK_NULL_HANDLE;
         VkImageView emView = VK_NULL_HANDLE;
-        // its NORMAL MAP, the pack's `<key>_n.png` (binding 3, the relief's;
-        // `normalFlat_` when there is none)
-        VkImage nmImg = VK_NULL_HANDLE; VkDeviceMemory nmMem = VK_NULL_HANDLE;
-        VkImageView nmView = VK_NULL_HANDLE;
     };
     std::vector<Tex> tex_;                // per pool slot: handles `uploaded_` owns
     Tex              white_;              // a material with no texture
     Tex              lightBlack_;         // the light map of a texture that has none
-    Tex              normalFlat_;         // the normal map of one that has none: flat, ALPHA 0 - "none"
     // the textures on the device, by their pixel storage (`setTextures`); the
     // entry holds that storage so its address is not reused while cached
     // `pinned`: a preloaded set's (`setPreloadTextures`) - kept while listed
@@ -957,9 +915,9 @@ private:
     // bodies and the crowd, measured 2026-10-20); a frame past it poses the
     // rest on the CPU (`writePose` refuses)
     static constexpr VkDeviceSize kPoseBytes = 2u << 20;
-    static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes + 1) * 16;   // (+ the body light's tint vec4)
-    // ...and with motion vectors the previous affines follow the current ones and the tint
-    static constexpr VkDeviceSize kPoseRangeMv = (1 + 2 * kPoseLights + 6 * kPoseMaxMeshes + 1) * 16;
+    static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes) * 16;
+    // ...and with motion vectors the previous affines follow the current ones
+    static constexpr VkDeviceSize kPoseRangeMv = (1 + 2 * kPoseLights + 6 * kPoseMaxMeshes) * 16;
     VkDeviceSize poseRange_ = kPoseRange;
     VkDescriptorSetLayout dsl2_ = VK_NULL_HANDLE;
     VkBuffer poseBuf_ = VK_NULL_HANDLE;
@@ -2473,26 +2431,6 @@ bool VulkanRenderer::makeTarget() {
                        litUbo_, litUboMem_);
             vkMapMemory(dev_, litUboMem_, 0, sizeof(LightUbo), 0, &litUboPtr_);
             if (litUboPtr_) std::memset(litUboPtr_, 0, sizeof(LightUbo));
-            // the tiled point lights' buffers, only for a frame that sends
-            // the emitters' lights: without them no tiled pipeline is bound,
-            // and the 32 MB stayed mapped for nothing (`verify.py: engine:
-            // gpu readback on demand`, 2026-10-21)
-            if (emitters_) {
-                makeBuffer(kPointsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                           pointsBuf_, pointsMem_);
-                vkMapMemory(dev_, pointsMem_, 0, kPointsBytes, 0, &pointsPtr_);
-                // TWO HALVES: the frame's camera's tiles, then the water
-                // reflection's - binned for ITS camera (`ds1Refl_`)
-                makeBuffer(kTileWordsMax * 4 * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                           tilesBuf_, tilesMem_);
-                vkMapMemory(dev_, tilesMem_, 0, kTileWordsMax * 4 * 2, 0, &tilesPtr_);
-                if (tilesPtr_) {
-                    std::memset(tilesPtr_, 0, 16);
-                    std::memset(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, 0, 16);
-                }
-            }
         }
     }
     // volumetrics: the lamps' uniform block, written every frame
@@ -2525,7 +2463,7 @@ bool VulkanRenderer::makeTarget() {
         omk::event("softparticles", {{"on", 1}, {"samples", static_cast<int>(samples_)}});
     }
     // NO SHADOW MAP, NO RENDERER: set 1 is made with it - the shadow map, the
-    // lights' uniforms, the tiled lights' buffers - and every scene pipeline
+    // lights' uniforms - and every scene pipeline
     // reads that set, so a frame without it bound draws on nothing (MoltenVK
     // faults in its first draw: `OMK_VK_IMAGE_FAIL="shadow map"`, 2026-10-24).
     // Refused here like a render target, and the frontend falls back. (It
@@ -2589,22 +2527,21 @@ bool VulkanRenderer::retexture(int filter, int aniso) {
 
 bool VulkanRenderer::makePipelines() {
     // SET 0 a texture's: binding 0 the texture, 1 its LIGHT MAP (the bloom's;
-    // black without one), 2 the WATER pass's reflection (black without one),
-    // 3 its NORMAL MAP (the relief's; flat, alpha 0, without one)
-    VkDescriptorSetLayoutBinding b2tex[4]{};
-    for (uint32_t k = 0; k < 4; ++k) {
+    // black without one), 2 the WATER pass's reflection (black without one)
+    VkDescriptorSetLayoutBinding b2tex[3]{};
+    for (uint32_t k = 0; k < 3; ++k) {
         b2tex[k].binding = k; b2tex[k].descriptorCount = 1;
         b2tex[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         b2tex[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
     VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dli.bindingCount = 4; dli.pBindings = b2tex;
+    dli.bindingCount = 3; dli.pBindings = b2tex;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &dsl_), "descriptorSetLayout");
 
     // SET 1 is per FRAME - the shadow map and the light's transform. It exists
     // whether or not a shadow is drawn, because a pipeline layout is fixed at
     // creation and `strength = 0` is how a frame says it has no shadow.
-    VkDescriptorSetLayoutBinding b1[5]{};
+    VkDescriptorSetLayoutBinding b1[3]{};
     b1[0].binding = 0; b1[0].descriptorCount = 1;
     b1[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     b1[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -2614,14 +2551,8 @@ bool VulkanRenderer::makePipelines() {
     b1[2].binding = 2; b1[2].descriptorCount = 1;
     b1[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     b1[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    // ...3 the frame's point lights and 4 their TILES (`o3de/lighttiles.h`)
-    for (uint32_t k = 3; k < 5; ++k) {
-        b1[k].binding = k; b1[k].descriptorCount = 1;
-        b1[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        b1[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    }
     VkDescriptorSetLayoutCreateInfo dli1{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dli1.bindingCount = 5; dli1.pBindings = b1;
+    dli1.bindingCount = 3; dli1.pBindings = b1;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli1, nullptr, &dsl1_), "descriptorSetLayout1");
 
     // SET 2 is the POSE BUFFER (`posesBodies`): one dynamic storage buffer,
@@ -2680,12 +2611,10 @@ bool VulkanRenderer::makePipelines() {
     VkShaderModule vs = mvOn_ ? module(kVertMv, sizeof(kVertMv)) : module(kVert, sizeof(kVert));
     VkShaderModule fs = rtOn_ ? (mvOn_ ? module(kFragRtMv, sizeof(kFragRtMv)) : module(kFragRt, sizeof(kFragRt)))
                       : mvOn_ ? module(kFragMv, sizeof(kFragMv)) : module(kFrag, sizeof(kFrag));
-    // THE REMASTER'S modules (the tiled point lights, the cutout's late depth - built from the plain
-    // scene shader: not on a ray-traced, motion-vector or soft frame, whose passes keep their own)
+    // THE CUTOUT's late-depth module - built from the plain scene shader: not on a ray-traced,
+    // motion-vector or soft frame, whose passes keep their own
     const bool plainBuild = !rtOn_ && !mvOn_;
-    VkShaderModule fsTiled = plainBuild ? module(kFragTiled, sizeof(kFragTiled)) : VK_NULL_HANDLE;
     VkShaderModule fsCut = plainBuild ? module(kFragCut, sizeof(kFragCut)) : VK_NULL_HANDLE;
-    VkShaderModule fsTiledCut = plainBuild ? module(kFragTiledCut, sizeof(kFragTiledCut)) : VK_NULL_HANDLE;
     // ...and the scene pass that COUNTS its rays (`pipeCount_`, one frame in 60)
     VkShaderModule fsCount = !(rtOn_ && rtCountFeat_) ? VK_NULL_HANDLE
                            : mvOn_ ? module(kFragRtcMv, sizeof(kFragRtcMv)) : module(kFragRtc, sizeof(kFragRtc));
@@ -2831,15 +2760,6 @@ bool VulkanRenderer::makePipelines() {
             VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeSubj_[k]),
                     "subject pipeline");
         }
-        // ...and the same with the TILED fragment module
-        if (fsTiled) {
-            VkPipelineShaderStageCreateInfo st2[2] = {stages[0], stages[1]};
-            st2[1].module = fsTiled;
-            gp.pStages = st2;
-            if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiled_[k]) != VK_SUCCESS)
-                pipeTiled_[k] = VK_NULL_HANDLE;
-            gp.pStages = stages;
-        }
         // ...and the OPAQUE CUTOUT's, the depth the shader's (only an opaque
         // draw writes depth); without one a cutout draw keeps the plain
         if (k == 0) {
@@ -2848,10 +2768,6 @@ bool VulkanRenderer::makePipelines() {
             st3[1].module = fsCut;
             if (!fsCut || vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeCut_) != VK_SUCCESS)
                 pipeCut_ = VK_NULL_HANDLE;
-            st3[1].module = fsTiledCut;
-            if (!fsTiled || !fsTiledCut ||
-                vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiledCut_) != VK_SUCCESS)
-                pipeTiledCut_ = VK_NULL_HANDLE;
             gp.pStages = stages;
         }
     }
@@ -2900,19 +2816,11 @@ bool VulkanRenderer::makePipelines() {
             gp.pDynamicState = &dsi; gp.layout = plo_; gp.renderPass = reflPass1_;
             if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipe1_[k]) != VK_SUCCESS)
                 pipe1_[k] = VK_NULL_HANDLE;
-            if (fsTiled) {
-                VkPipelineShaderStageCreateInfo st2[2] = {stages[0], stages[1]};
-                st2[1].module = fsTiled;
-                gp.pStages = st2;
-                if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiled1_[k]) != VK_SUCCESS)
-                    pipeTiled1_[k] = VK_NULL_HANDLE;
-            }
         }
         // all or none: a missing one and the floors keep the MSAA pass
         for (int k = 0; k < 3; ++k)
-            if (!pipe1_[k] || (fsTiled && !pipeTiled1_[k])) {
+            if (!pipe1_[k]) {
                 for (auto& p : pipe1_) if (p) { vkDestroyPipeline(dev_, p, nullptr); p = VK_NULL_HANDLE; }
-                for (auto& p : pipeTiled1_) if (p) { vkDestroyPipeline(dev_, p, nullptr); p = VK_NULL_HANDLE; }
                 if (reflPass1_) { vkDestroyRenderPass(dev_, reflPass1_, nullptr); reflPass1_ = VK_NULL_HANDLE; }
                 break;
             }
@@ -3019,22 +2927,18 @@ bool VulkanRenderer::makePipelines() {
     vkDestroyShaderModule(dev_, fs, nullptr);
     if (fsSoft) vkDestroyShaderModule(dev_, fsSoft, nullptr);
     if (fsCount) vkDestroyShaderModule(dev_, fsCount, nullptr);
-    if (fsTiled) vkDestroyShaderModule(dev_, fsTiled, nullptr);
     if (fsCut) vkDestroyShaderModule(dev_, fsCut, nullptr);
-    if (fsTiledCut) vkDestroyShaderModule(dev_, fsTiledCut, nullptr);
 
     if (!makeSampler()) return false;
 
     // 64 sets: the engine's texture pool is 58 slots, plus the white fallback.
     // Plus set 1, the per-frame shadow set, and its one uniform buffer.
     // two samplers a texture's set since the light map (binding 1)
-    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 531},   // four a texture's set
+    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 531},   // up to four a texture's set
                                   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
-                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1},
-                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};   // set 1's tiled lights
+                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1}};
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    // (+1: the reflection's own set 1, `ds1Refl_`)
-    dpi.maxSets = 132; dpi.poolSizeCount = 4; dpi.pPoolSizes = ps;
+    dpi.maxSets = 132; dpi.poolSizeCount = 3; dpi.pPoolSizes = ps;
     // a texture's set is freed on its own when it leaves the pool (`setTextures`)
     dpi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     VKCHECK(vkCreateDescriptorPool(dev_, &dpi, nullptr, &dpool_), "descriptorPool");
@@ -3153,14 +3057,7 @@ void VulkanRenderer::makeShadowSet() {
     VkDescriptorImageInfo imgi{shSampler_, shView_,
                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkDescriptorBufferInfo lbufi{litUbo_, 0, sizeof(LightUbo)};
-    VkDescriptorBufferInfo pbufi{pointsBuf_, 0, kPointsBytes};
-    VkDescriptorBufferInfo tbufi{tilesBuf_, 0, kTileWordsMax * 4};
-    // ...and the water REFLECTION's twin, its tiles the buffer's second half
-    if (pointsBuf_ && tilesBuf_) {
-        if (ds1Refl_) { vkFreeDescriptorSets(dev_, dpool_, 1, &ds1Refl_); ds1Refl_ = VK_NULL_HANDLE; }
-        if (vkAllocateDescriptorSets(dev_, &sai, &ds1Refl_) != VK_SUCCESS) ds1Refl_ = VK_NULL_HANDLE;
-    }
-    VkWriteDescriptorSet wr[5]{};
+    VkWriteDescriptorSet wr[3]{};
     wr[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     wr[0].dstSet = ds1_; wr[0].dstBinding = 0; wr[0].descriptorCount = 1;
     wr[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -3173,19 +3070,7 @@ void VulkanRenderer::makeShadowSet() {
     wr[2].dstSet = ds1_; wr[2].dstBinding = 2; wr[2].descriptorCount = 1;
     wr[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     wr[2].pBufferInfo = &lbufi;
-    for (uint32_t k = 3; k < 5; ++k) {
-        wr[k] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        wr[k].dstSet = ds1_; wr[k].dstBinding = k; wr[k].descriptorCount = 1;
-        wr[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        wr[k].pBufferInfo = k == 3 ? &pbufi : &tbufi;
-    }
-    vkUpdateDescriptorSets(dev_, pointsBuf_ && tilesBuf_ ? 5 : 3, wr, 0, nullptr);
-    if (ds1Refl_) {
-        VkDescriptorBufferInfo rbufi{tilesBuf_, kTileWordsMax * 4, kTileWordsMax * 4};
-        for (auto& w : wr) w.dstSet = ds1Refl_;
-        wr[4].pBufferInfo = &rbufi;
-        vkUpdateDescriptorSets(dev_, 5, wr, 0, nullptr);
-    }
+    vkUpdateDescriptorSets(dev_, 3, wr, 0, nullptr);
 }
 
 // The swapchain, and the presentation path.
@@ -5321,25 +5206,16 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
     // A set is freed on its own and only the new ones are allocated -
     // reallocating them all on a per-frame call exhausts the descriptor pool
     // and crashes.
-    // binding 1 of a texture's set: its light map, or the shared black one;
-    // binding 3 its normal map, or the shared flat one
-    const auto bindLight = [&](VkDescriptorSet ds, VkImageView view, VkImageView normal) {
-        VkDescriptorImageInfo dii[2] = {{sampler_, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                        {sampler_, normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-        VkWriteDescriptorSet wr[2]{};
-        for (int k = 0; k < 2; ++k) {
-            wr[k].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            wr[k].dstSet = ds; wr[k].dstBinding = k == 0 ? 1 : 3; wr[k].descriptorCount = 1;
-            wr[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            wr[k].pImageInfo = &dii[k];
-        }
-        vkUpdateDescriptorSets(dev_, 2, wr, 0, nullptr);
+    // binding 1 of a texture's set: its light map, or the shared black one
+    const auto bindLight = [&](VkDescriptorSet ds, VkImageView view) {
+        VkDescriptorImageInfo dii{sampler_, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr.dstSet = ds; wr.dstBinding = 1; wr.descriptorCount = 1;
+        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        wr.pImageInfo = &dii;
+        vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
         bindReflection(ds);
     };
-    if (normalFlat_.img == VK_NULL_HANDLE) {
-        upload([](unsigned char* d) { d[0] = 128; d[1] = 128; d[2] = 255; d[3] = 0; }, 1, 1, normalFlat_, false,
-               false, "texture stand-ins");
-    }
     if (lightBlack_.img == VK_NULL_HANDLE) {
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_, false, false,
                "texture stand-ins");
@@ -5351,8 +5227,8 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
                "texture stand-ins");
         // (the stand-ins refused - 4 bytes each, so a device already out of
         // memory: no set to write into, and a draw with none is skipped)
-        if (white_.ds && lightBlack_.view && normalFlat_.view)
-            bindLight(white_.ds, lightBlack_.view, normalFlat_.view);
+        if (white_.ds && lightBlack_.view)
+            bindLight(white_.ds, lightBlack_.view);
     }
     const auto keyOf = [](const omk::Texture& x) {
         return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
@@ -5376,9 +5252,6 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         if (old.emView) vkDestroyImageView(dev_, old.emView, nullptr);
         if (old.emImg)  vkDestroyImage(dev_, old.emImg, nullptr);
         if (old.emMem)  freeDeviceMemory(old.emMem);
-        if (old.nmView) vkDestroyImageView(dev_, old.nmView, nullptr);
-        if (old.nmImg)  vkDestroyImage(dev_, old.nmImg, nullptr);
-        if (old.nmMem)  freeDeviceMemory(old.nmMem);
         it = uploaded_.erase(it);
     }
     if (!preload) tex_.assign(t.size(), Tex{});
@@ -5404,7 +5277,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         prepared = static_cast<long>(pack.parkedTaken() - taken0);   // decoded ahead, on a load's thread
     }
     const auto t1 = clk::now();
-    int packed = 0, normals = 0;
+    int packed = 0;
     for (std::size_t i = 0; i < t.size(); ++i) {
         const omk::Texture& x = t[i];
         if (!x.hasPixels()) continue;
@@ -5450,22 +5323,8 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
                 u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
                 ++lit;
             }
-            // ...and its NORMAL MAP (the relief's), when the pack has one
-            if (pack.shown() && !reps[i].normalZ.empty()) {
-                Tex nm;
-                uploadZ(reps[i].normalZ, nm, false);
-                u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
-                ++normals;
-            } else if (pack.shown() && !reps[i].normal.empty()) {
-                const omk::PackImage& rep = reps[i];
-                Tex nm;
-                upload([&](unsigned char* d) { std::memcpy(d, rep.normal.data(), rep.normal.size()); }, rep.nw, rep.nh, nm, false);
-                u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
-                ++normals;
-            }
-            if (u.t.ds && lightBlack_.view && normalFlat_.view)
-                bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view,
-                          u.t.nmView ? u.t.nmView : normalFlat_.view);
+            if (u.t.ds && lightBlack_.view)
+                bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view);
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
             ++fresh;
         } else if (preload) {
@@ -5492,7 +5351,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
                     "decode %.1f ms, the uploads %.1f ms\n", fresh, t.size(), blocksUp, decodeMs, uploadMs);
     if (pack.shown())
         omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
-                                    {"replaced", packed}, {"lights", lit}, {"normals", normals},
+                                    {"replaced", packed}, {"lights", lit},
                                     {"lightChannels", r8Ok_ ? 1 : 4}, {"fresh", fresh}, {"blocks", blocksUp},
                                     {"prepared", prepared},
                                     {"decodeMs", decodeMs}, {"uploadMs", uploadMs}});
@@ -5957,8 +5816,6 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
-        ub.eye[3] = view.setDim;   // the night (`View::setDim`), w of the eye's vec4
-        ub.fx[0] = view.relief;
         // THE MIST (`View::mist`): its strength, its ground and its height
         ub.fx[1] = view.mist; ub.fx[2] = view.mistGround; ub.fx[3] = view.mistHeight;
         ub.dust[0] = view.dust; ub.dust[1] = view.dustDrift[0]; ub.dust[2] = view.dustDrift[1];
@@ -5969,72 +5826,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.veil[3] = view.puddles;   // the PUDDLES' strength, in the veils' spare
         for (int k = 0; k < 3; ++k) ub.veilColour[k] = view.veilColour[k];
         ub.veilColour[3] = 0.0f;
-        // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame
-        // keeps, and their tiles binned for THIS camera at the render size.
-        // The reflection pass begins first and the frame's pass last - the
-        // last binning is the one both read, and the reflection skips them.
-        ub.tiles = 0;
-        tilesNow_ = false;
-        // `OMK_REFL_UNLIT=1`, an instrument: the reflection's tiles left empty,
-        // as before - what `verify.py: engine: floors` compares against
-        static const bool reflUnlit = omk::envFlag("OMK_REFL_UNLIT");
-        if (passFb_ != VK_NULL_HANDLE && reflUnlit && !view.points.empty() && tilesPtr_ && pipeTiled_[0]) {
-            // the tiled pipelines, as the reflection drew with, and NO tiles
-            // (0 across): the module the same, its lights none
-            std::memset(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, 0, 16);
-            ub.tiles = 1;
-            tilesNow_ = true;
-        } else if (passFb_ != VK_NULL_HANDLE && !view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0] &&
-            ds1Refl_ != VK_NULL_HANDLE) {
-            // THE WATER REFLECTION'S begin: its tiles binned for the REFLECTED
-            // camera into the buffer's second half, which its own set 1 binds
-            // (the points are the frame's - the world's lights light the world
-            // wherever it is seen from; the frame's begin writes them again)
-            const std::size_t np = std::min<std::size_t>(view.points.size(), static_cast<std::size_t>(omk::kMaxPoints));
-            omk::RCamera bc = view.cam;
-            bc.w = view.letterboxed() ? view.vw : w_;
-            bc.h = view.letterboxed() ? view.vh : h_;
-            const int hd = reflHalf_ ? 2 : 1;   // the floors' reflection is drawn at half size
-            omk::binLights(bc, (rs(bc.w) + hd - 1) / hd, (rs(bc.h) + hd - 1) / hd,
-                           std::span<const omk::View::GpuLight>(view.points.data(), np), tilesRefl_);
-            if (tilesRefl_.words.size() <= kTileWordsMax) {
-                std::memcpy(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, tilesRefl_.words.data(),
-                            tilesRefl_.words.size() * 4);
-                ub.tiles = 1;
-                tilesNow_ = true;
-            }
-        } else if (!view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0]) {
-            const std::size_t np = std::min<std::size_t>(view.points.size(), static_cast<std::size_t>(omk::kMaxPoints));
-            auto* gp = static_cast<GpuLightStd140*>(pointsPtr_);
-            for (std::size_t i = 0; i < np; ++i) {
-                const auto& l = view.points[i];
-                for (int k = 0; k < 3; ++k) { gp[i].posA[k] = l.pos[k]; gp[i].dirB[k] = l.dir[k]; gp[i].colourI[k] = l.colour[k]; }
-                gp[i].posA[3] = l.radiusA; gp[i].dirB[3] = l.radiusB; gp[i].colourI[3] = l.intensity;
-            }
-            omk::RCamera bc = view.cam;
-            bc.w = view.letterboxed() ? view.vw : w_;
-            bc.h = view.letterboxed() ? view.vh : h_;
-            omk::binLights(bc, rs(bc.w), rs(bc.h), std::span<const omk::View::GpuLight>(view.points.data(), np), tiles_);
-            if (tiles_.words.size() <= kTileWordsMax) {
-                std::memcpy(tilesPtr_, tiles_.words.data(), tiles_.words.size() * 4);
-                ub.tiles = 1;
-                tilesNow_ = true;
-            } else if (!tilesOverTold_) {
-                tilesOverTold_ = true;   // said, never silent: every point light goes with it
-                std::fprintf(stderr, "vulkan: the tiled lights' lists (%zu words) past the buffer's %llu - "
-                             "the point lights off this frame\n", tiles_.words.size(),
-                             static_cast<unsigned long long>(kTileWordsMax));
-            }
-            if (!tilesTold_) {
-                tilesTold_ = true;
-                omk::event("remaster.tiles", {{"lights", static_cast<long>(np)}, {"listed", tiles_.listed},
-                                              {"full", tiles_.full}, {"tile", tiles_.tile}});
-                std::printf("vulkan: the tiled point lights - %zu lights over %dx%d tiles of %d px, %ld listed, "
-                            "%d tiles full (a REMASTER feature)\n", np, tiles_.across, tiles_.down, tiles_.tile,
-                            tiles_.listed, tiles_.full);
-            }
-        }
-        // (the soft particles' fade constants - outside the tiled lights' branch above)
+        // (the soft particles' fade constants)
         if (softOn_) {
             const float nearP = omk::kNearCut, farP = 200000.0f;
             ub.soft[0] = farP / (farP - nearP);
@@ -6142,9 +5934,7 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
     for (int i = 0; i < nl; ++i) std::memcpy(f + 4 + 8 * i, d.vertexLights + 8 * i, 8 * sizeof(float));
     float* a = f + 4 + 8 * kPoseLights;
     std::memcpy(a, d.meshPose, d.meshPoses * 12 * sizeof(float));   // three vec4 an affine
-    float* t = a + 12 * d.meshPoses;                                 // ...and the body light's tint
-    t[0] = d.lightTint[0]; t[1] = d.lightTint[1]; t[2] = d.lightTint[2]; t[3] = 1.0f;
-    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses + 1) * 16;
+    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses) * 16;
     // ...and with motion vectors, the body's PREVIOUS affines right after them (`scene.vert` -DOMK_MOTION),
     // from the last frame's block of the same `meshPose` - or the current ones again for a body new this
     // frame, which then shows only the camera's motion rather than a wrong one of its own
@@ -6154,7 +5944,7 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
         // (and across a cut, where nothing has a previous position)
         const float* from = !resetOwed_ && prev != prevAffines_.end() && prev->second.size() == n
                                 ? prev->second.data() : d.meshPose;
-        std::memcpy(a + n + 4, from, n * sizeof(float));  // (after the tint's vec4)
+        std::memcpy(a + n, from, n * sizeof(float));
         curAffines_[d.meshPose].assign(d.meshPose, d.meshPose + n);
         poseUsed_ += 3 * d.meshPoses * 16;
     }
@@ -6257,12 +6047,10 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
                    : soft           ? pipeSoft_[k]
                    : subj           ? pipeSubj_[k]
                    : rtCounting_ && pipeCount_[k] != VK_NULL_HANDLE ? pipeCount_[k]
-                   : passFb_ && passFb_ == reflFbuf1_ ? (tilesNow_ && pipeTiled1_[k] ? pipeTiled1_[k] : pipe1_[k])
-                   : tilesNow_ && pipeTiled_[k] ? pipeTiled_[k]
+                   : passFb_ && passFb_ == reflFbuf1_ ? pipe1_[k]
                                     : pipe_[k];
     // an opaque CUTOUT draw: the same pipeline with the shader's depth
     if (d.cutout && use == pipe_[0] && pipeCut_) use = pipeCut_;
-    else if (d.cutout && use == pipeTiled_[0] && pipeTiledCut_) use = pipeTiledCut_;
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, use);
 
     // The texture is the key's LOW SIX BITS and nothing else (ASSETS 4b) -
@@ -6274,11 +6062,9 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     if (ds == VK_NULL_HANDLE) return;   // not even the white stand-in: nothing to draw with
     lightMapNow_ |= slot < tex_.size() && tex_[slot].emView != VK_NULL_HANDLE;
     vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 0, 1, &ds, 0, nullptr);
-    // (the water reflection's pass binds its own: the tiles of ITS camera)
-    const VkDescriptorSet ds1 = passFb_ != VK_NULL_HANDLE && ds1Refl_ != VK_NULL_HANDLE ? ds1Refl_ : ds1_;
-    if (ds1 != VK_NULL_HANDLE)
+    if (ds1_ != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 1, 1,
-                                &ds1, 0, nullptr);
+                                &ds1_, 0, nullptr);
     if (soft)
         vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 3, 1, &softDs_, 0, nullptr);
     // set 2, the pose buffer - bound for every draw (the shader declares it),
@@ -8274,39 +8060,28 @@ VulkanRenderer::~VulkanRenderer() {
         if (t.emView) vkDestroyImageView(dev_, t.emView, nullptr);
         if (t.emImg)  vkDestroyImage(dev_, t.emImg, nullptr);
         if (t.emMem)  freeDeviceMemory(t.emMem);
-        if (t.nmView) vkDestroyImageView(dev_, t.nmView, nullptr);
-        if (t.nmImg)  vkDestroyImage(dev_, t.nmImg, nullptr);
-        if (t.nmMem)  freeDeviceMemory(t.nmMem);
     };
     for (auto& [key, u] : uploaded_) killTex(u.t);   // the slots' handles are theirs
     uploaded_.clear();
     tex_.clear();
     killTex(white_);
     killTex(lightBlack_);
-    killTex(normalFlat_);
     if (sampler_) vkDestroySampler(dev_, sampler_, nullptr);
     for (VkSampler old : retiredSamplers_) vkDestroySampler(dev_, old, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);
     if (tsPool_) vkDestroyQueryPool(dev_, tsPool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);
-    for (auto& p : pipeTiled_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     if (pipeCut_) vkDestroyPipeline(dev_, pipeCut_, nullptr);
-    if (pipeTiledCut_) vkDestroyPipeline(dev_, pipeTiledCut_, nullptr);
     for (auto& p : pipe1_) if (p) vkDestroyPipeline(dev_, p, nullptr);
-    for (auto& p : pipeTiled1_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     if (reflPass1_) vkDestroyRenderPass(dev_, reflPass1_, nullptr);
     if (plo_) vkDestroyPipelineLayout(dev_, plo_, nullptr);
     if (dsl_) vkDestroyDescriptorSetLayout(dev_, dsl_, nullptr);
     if (dsl2_) vkDestroyDescriptorSetLayout(dev_, dsl2_, nullptr);
     if (poseBuf_) vkDestroyBuffer(dev_, poseBuf_, nullptr);
     if (poseMem_) freeDeviceMemory(poseMem_);
-    if (pointsBuf_) vkDestroyBuffer(dev_, pointsBuf_, nullptr);
-    if (pointsMem_) freeDeviceMemory(pointsMem_);
     flushUploads();   // (nothing pending outside a pool; its own buffers, if any)
     if (ring_) vkDestroyBuffer(dev_, ring_, nullptr);
     if (ringMem_) freeDeviceMemory(ringMem_);
-    if (tilesBuf_) vkDestroyBuffer(dev_, tilesBuf_, nullptr);
-    if (tilesMem_) freeDeviceMemory(tilesMem_);
     if (readBuf_) vkDestroyBuffer(dev_, readBuf_, nullptr);
     if (readMem_) freeDeviceMemory(readMem_);
     if (fbuf_) vkDestroyFramebuffer(dev_, fbuf_, nullptr);

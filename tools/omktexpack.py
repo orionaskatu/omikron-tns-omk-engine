@@ -689,15 +689,6 @@ def grade_rgb(kind, r, g, b):
 CITY_GRADES = {"ANEKBAH": "noir", "JAUNPUR": "filmic", "LAHOREH": "sunlit", "QALISAR": "neon2"}
 # interiors and other sets that take a city's grade (`map.txt`); the rest none
 CITY_OF = {"AAPKAYL": "ANEKBAH"}
-# THE NIGHT (`night.txt`, `CityGrades::nightOf`): how much of a set's painted
-# light stays when the emitters' lights are on - Qalisar's neons its night's
-# light, the Blade Runner streets it is drawn from (the reader, 2026-10-20)
-CITY_NIGHT = {"QALISAR": 0.5}
-# THE LIGHT SOURCES (`lights.txt`, `o3de/emitterlight.h` SurfaceCuration):
-# which textures, and which parts of them, cast light with the emitters'
-# light on - the data cannot tell a neon tube from a bright painted panel.
-# Written only where there is none (the reader edits it); first drafts of
-# the four cities, from their atlases, 2026-10-20.
 # THE REFLECTING FLOORS (`floors.txt`, `o3de/floorreflect.h`): which floors
 # are wet or polished, and how much - a FIRST DRAFT, Qalisar alone, read off
 # `texpack_tool floors` (its level opaque area by texture and height): the
@@ -715,83 +706,6 @@ CITY_FLOORS = """# THE REFLECTING FLOORS - which floors mirror the scene, and ho
 Qalisar BATITR09 = 0.5
 Qalisar CATITR03 = 0.5
 Qalisar CATITR02 = 0.35
-"""
-
-CITY_LIGHTS = """# THE LIGHT SOURCES - which textures, and which parts of them, cast light
-# (omk-play's emitters' light, --fx-light; `o3de/emitterlight.h`).
-# A set this file names is curated: only what is listed lights. A set it does
-# not name keeps the automatic rules (the light maps and the neon rule).
-#
-#   SET TEXTURE [U0,V0,U1,V1] = GAIN [RRGGBB]
-#
-# U/V in the ORIGINAL texture's texels (256x256 here, wrapped); a texel takes
-# the first rectangle it lies in, then the texture's line without one. Which
-# texels of it glow is still the rules' (strong light map, or a neon colour).
-# GAIN: 1 a lit panel, 3-4 a neon tube. RRGGBB: the light's colour, else the
-# lit texels'. `texpack_tool lights <pack> <set.3DO>` lists the candidates.
-#
-# QALISAR - a first draft, 2026-10-20: the neon letters strong and coloured,
-# the signs bright, the lit windows and panels low.
-QALISAR CATITR05 224,0,256,128 = 2.0 ff2ec8   # the pink letters ("XOOC")
-QALISAR CATITR05 192,0,224,128 = 2.5          # the white/turquoise letters beside them
-QALISAR CATITR05 0,0,128,128 = 1.0            # the yellow emblem panel
-QALISAR CATITR05 = 0.5                        # its lit windows
-QALISAR CATITR20 0,0,128,128 = 0.5            # the lit glass panel
-QALISAR BATITR11 128,128,256,256 = 1.0        # the strip lamp
-QALISAR CATITR17 0,0,128,128 = 2.5            # the turquoise letter signs
-QALISAR CATITR17 = 0.5                        # the yellow window
-QALISAR CATITR10 0,0,128,128 = 2.0            # the orange sign
-QALISAR CATITR10 128,128,256,256 = 1.5        # the white-lettered signs
-QALISAR CATITR07 128,64,256,128 = 2.0         # the yellow sign
-QALISAR BATITR12 0,0,128,128 = 1.5            # the sign bands
-QALISAR BATITR12 = 0.5                        # the lit panel
-QALISAR CATITR13 128,0,256,128 = 1.5          # the signs
-QALISAR CATITR13 = 0.5                        # the windows
-QALISAR CATITR18 = 0.5                        # the posters
-QALISAR BATITR16 128,0,256,32 = 3.0           # the orange letters
-QALISAR BATITR04 = 0.5                        # the lit panel
-QALISAR BATITR19 = 0.6                        # the emblem
-QALISAR BATITR15 = 1.5                        # the sign atlas
-#
-# ANEKBAH - a first draft, 2026-10-20: the letters and the neon star strong,
-# the signs and the lamps bright, the lit windows low; the paintings out.
-ANEKBAH BATITR16 128,0,256,32 = 3.0           # the orange letters
-ANEKBAH BATITR13 0,0,128,128 = 2.0            # the neon star
-ANEKBAH BATITR13 128,0,192,128 = 1.5          # the small signs
-ANEKBAH BATITR12 0,0,128,128 = 1.5            # the sign bands
-ANEKBAH BATITR12 128,128,256,256 = 0.5        # the lit panel
-ANEKBAH BATITR15 0,0,256,128 = 1.5            # the sign atlas
-ANEKBAH BATITR15 = 0.5                        # its posters
-ANEKBAH BATITR18 224,0,256,128 = 2.0          # the letter column
-ANEKBAH BATITR18 64,0,224,128 = 0.5           # the lit panel
-ANEKBAH BATITR18 128,128,256,256 = 0.4        # the food posters
-ANEKBAH BATITR20 192,128,256,256 = 2.0        # the green letters
-ANEKBAH BATITR20 128,128,192,256 = 1.0        # the lamp
-ANEKBAH BATITR20 0,0,128,128 = 1.0            # the green lamp strips
-ANEKBAH BATITR14 = 1.0                        # the yellow lamps
-ANEKBAH BATITR17 128,64,256,128 = 1.0         # the lamps
-ANEKBAH BATITR11 128,128,256,256 = 1.0        # the strip lamp
-ANEKBAH BATITR08 64,0,192,128 = 0.5           # the lit window
-ANEKBAH BATITR04 128,128,256,256 = 0.5        # the lit panel
-ANEKBAH BATITR10 0,128,128,256 = 0.5          # the lit window
-ANEKBAH BATITR19 0,128,128,256 = 0.6          # the emblem
-#
-# JAUNPUR - a first draft, 2026-10-20: a sunlit city - its signs alone, at 1;
-# its light maps mostly mark white sandstone, which is bright, not light.
-JAUNPUR TATITR15 64,0,128,128 = 1.0           # the sign column
-JAUNPUR TATITR17 0,0,128,128 = 1.0            # the sign panels
-JAUNPUR TATITR18 128,0,256,128 = 1.0          # the signs
-JAUNPUR TATITR12 0,0,64,128 = 1.0             # the sign column
-JAUNPUR TATITR12 128,0,256,128 = 1.0          # the sign bands
-JAUNPUR TATITR05 192,128,256,256 = 1.0        # the signs
-JAUNPUR SOUK02 128,0,192,128 = 1.0            # the sign column
-#
-# LAHOREH - a first draft, 2026-10-20: sunlit too - its signs and its lamp.
-LAHOREH VENISED3 0,0,128,128 = 1.0            # the sign columns
-LAHOREH VENISE3 0,0,128,128 = 1.0             # the sign columns
-LAHOREH VENISE19 0,0,256,128 = 1.0            # the sign atlas
-LAHOREH VENISE18 0,0,32,256 = 1.0             # the letter column
-LAHOREH BATITR11 128,128,256,256 = 1.0        # the strip lamp
 """
 
 
@@ -812,11 +726,7 @@ def cmd_grades(out, depth=1.0):
     os.makedirs(out, exist_ok=True)
     for city, kind in CITY_GRADES.items():
         write_cube(os.path.join(out, city + ".cube"), kind, depth=depth)
-    with open(os.path.join(out, "night.txt"), "w") as f:
-        f.write("# a set name = the share of its painted light kept under the emitters' lights\n")
-        for k, v in CITY_NIGHT.items():
-            f.write(f"{k} = {v}\n")
-    for name, text in (("lights.txt", CITY_LIGHTS), ("floors.txt", CITY_FLOORS)):
+    for name, text in (("floors.txt", CITY_FLOORS),):
         lp = os.path.join(out, name)
         if not os.path.exists(lp):
             with open(lp, "w") as f:
@@ -827,7 +737,7 @@ def cmd_grades(out, depth=1.0):
         f.write("# a set name = the city whose grade it takes (omk-play --grade DIR)\n")
         for k, v in CITY_OF.items():
             f.write(f"{k} = {v}\n")
-    print(f"{len(CITY_GRADES)} city grades (.cube, 33^3, depth {depth}), night.txt, lights.txt, floors.txt "
+    print(f"{len(CITY_GRADES)} city grades (.cube, 33^3, depth {depth}), floors.txt "
           f"and map.txt into {out}")
 
 

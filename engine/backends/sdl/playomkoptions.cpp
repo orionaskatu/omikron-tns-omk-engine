@@ -129,10 +129,7 @@ void PlayState::omkOptionsOpen() {
         rem("wet", wetStrength, wetFlag, "--wet", &S::wet, &S::wetSource);
         rem("rain3d", rain3dStrength, rain3dFlag, "--rain3d", &S::rain3d, &S::rain3dSource);
         rem("mist", mistStrength, mistFlag, "--mist", &S::mist, &S::mistSource);
-        rem("relief", relief, reliefFlag, "--relief", &S::relief, &S::reliefSource);
         rem("ao", aoStrength, aoFlag, "--ao", &S::ao, &S::aoSource);
-        rem("bodylight", bodyLight, bodyLightFlag, "--body-light", &S::bodyLight, &S::bodyLightSource);
-        rem("fxlight", fxLight, fxLightFlag, "--fx-light", &S::fxLight, &S::fxLightSource);
         rem("smooth", smoothBodies, smoothFlag, "--smooth", &S::smooth, &S::smoothSource);
         rem("upscale", upscale > 1.0f ? upscale : 1.0f, upscaleFlag, "--upscale", &S::upscale, &S::upscaleSource,
             1.0f);

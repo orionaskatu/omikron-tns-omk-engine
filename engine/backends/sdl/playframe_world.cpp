@@ -41,7 +41,6 @@ int PlayState::phaseWorld() {
                 if (bound > 0)
                     std::printf("world: frame %ld  %s binds %d ambient emitters into %s\n",
                                 frameNo, ws.stem.c_str(), bound, session.scene().file().c_str());
-                remasterEmitterLights(ws);   // the emitters' light (`backends/remaster/`)
                 break;
             }
         };

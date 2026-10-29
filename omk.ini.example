@@ -388,9 +388,9 @@
 ; preset); a key written here beats the preset, a flag beats the key.
 ;
 ; The preset: a folder holding the texture pack (pack/ or full/pack/) and
-; the grades (grades/, with lights.txt and floors.txt) - `omktexpack.py`
-; builds it. Its values: bloom 1.6, water 0.6, body light 1, fx light 1,
-; relief 2, ao 2, floors 1, wet 1, rain3d 1, mist 0.5, smooth 0.75, preload 15
+; the grades (grades/, with floors.txt) - `omktexpack.py`
+; builds it. Its values: bloom 1.6, water 0.6, ao 2,
+; floors 1, wet 1, rain3d 1, mist 0.5, smooth 0.75, preload 15
 ; (`kRemasterPreset` in engine/src/platform/settings.h).
 ;dir = /path/to/omk-pack
 ;
@@ -432,9 +432,7 @@
 ;grade = /path/to/grades
 ;
 ; Strengths, 0 = off: the glow of the pack's light maps (0..4); the water's
-; reflection (0..1, its grazing strength); the bodies lit by the set's
-; painted light (0..1); the set's flames and glows lighting what is near
-; them (0..4); the textures' relief under those lights (0..4, Vulkan); the
+; reflection (0..1, its grazing strength); the
 ; ambient occlusion at contacts (0..4, Vulkan); the floors floors.txt lists
 ; reflecting (0..1); the floors under the open sky wet by the game's own
 ; rain, darker and reflecting while it falls and drying after, and snow lying
@@ -443,9 +441,6 @@
 ; city's fog colour (0..1).
 ;bloom = 0
 ;water = 0
-;bodylight = 0
-;fxlight = 0
-;relief = 0
 ;ao = 0
 ;floors = 0
 ;wet = 0

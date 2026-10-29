@@ -393,19 +393,6 @@ struct Settings {
     // More memory for no load on arriving; the `--remaster` preset's 15.
     float  preload = 0.0f;
     Source preloadSource = Source::Default;
-    // `bodylight = S`: the BODIES LIT BY THEIR SURROUNDINGS (`o3de/lightprobe.h`),
-    // S the tint's strength, 0 off; Vulkan and GLES only.
-    float  bodyLight = 0.0f;
-    Source bodyLightSource = Source::Default;
-    // `fxlight = S`: the EMITTERS LIGHT (`o3de/emitterlight.h`) - the set's
-    // flames and glows become point lights, S their strength, 0 off; Vulkan
-    // and GLES only.
-    float  fxLight = 0.0f;
-    Source fxLightSource = Source::Default;
-    // `relief = S`: the RELIEF - the textures' brightness read as height under
-    // the emitters' point lights (`View::relief`), S its strength, 0 off.
-    float  relief = 0.0f;
-    Source reliefSource = Source::Default;
     // `smooth = S`: THE ROUNDED BODIES - each character triangle split 3x3 and
     // pulled toward its corners' normals by S (`o3de/smoothbody.h`). 0 = off.
     float  smooth = 0.0f;
@@ -457,8 +444,8 @@ struct Settings {
     bool anyRemaster() const {
         return !texturePack.empty() || !enhTexturePack.empty() || !uiPack.empty() || !fontPack.empty() || !filmPack.empty() ||
                !grade.empty() || !remasterDir.empty() || !smoothSkip.empty() || bloom > 0.0f || water > 0.0f ||
-               floors > 0.0f || wet > 0.0f || rain3d > 0.0f || mist > 0.0f || upscale > 1.0f || preload > 0.0f || ao > 0.0f || relief > 0.0f ||
-               smooth > 0.0f || fxLight > 0.0f || bodyLight > 0.0f;
+               floors > 0.0f || wet > 0.0f || rain3d > 0.0f || mist > 0.0f || upscale > 1.0f || preload > 0.0f || ao > 0.0f ||
+               smooth > 0.0f;
     }
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
@@ -710,10 +697,7 @@ inline constexpr RemasterPresetValue kRemasterPreset[] = {
     {"wet", 1.0f},
     {"rain3d", 1.0f},
     {"mist", 0.5f},      // the reader's, from a sheet of 0, 0.5 and 1 (2026-10-21)
-    {"relief", 2.0f},    // 2 once the pack's generated normal maps came
     {"ao", 2.0f},        // confirmed in play at 2 (2026-10-21)
-    {"bodylight", 1.0f},
-    {"fxlight", 1.0f},
     {"smooth", 0.75f},   // "do it by default" (2026-10-22)
     {"preload", 15.0f},  // 25 until the measurement of 2026-10-26
 };

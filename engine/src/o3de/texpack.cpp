@@ -359,14 +359,13 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 continue;
             }
         }
-        // (a texture the pack holds nothing for is still a job for the hook)
         bool grey = false;
         if (!files_.count(key) && !lights_.count(key))
             if (const auto g = greyOf_.find(key); g != greyOf_.end()) { key = g->second; grey = true; }
         // a REFUSED colour is not read again - but its light map still is
         const auto it = refused_.count(key) ? files_.end() : files_.find(key);
         const auto lt = lights ? lights_.find(key) : lights_.end();
-        if ((it == files_.end() && lt == lights_.end()) && !lightHook_) continue;
+        if (it == files_.end() && lt == lights_.end()) continue;
         const auto nt = normals && wantNormals_ && !grey ? normals_.find(key) : normals_.end();
         jobs.push_back({i, key, it != files_.end() ? &it->second : nullptr,
                         lt != lights_.end() ? &lt->second : nullptr, {}, grey,
@@ -374,7 +373,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         for (int kind = 0; kind < 3; ++kind)
             if (const auto f = ktx_[0][kind].find(key); f != ktx_[0][kind].end()) jobs.back().bc[kind] = &f->second;
         // the block formats: with the colours, never for a grey alias (its
-        // pixels are recomputed) nor what the light hook paints
+        // pixels are recomputed)
         if (colour && codecs_ && !grey) {
             Job& jb = jobs.back();
             for (const int c : {0, 1}) {
@@ -384,13 +383,9 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                     const auto f = ktx_[c][kind].find(key);
                     return f != ktx_[c][kind].end() ? &f->second : nullptr;
                 };
-                // a light map the hook paints into stays its PNG: the hook
-                // works on its pixels (the colour it reads falls back to the
-                // shipped texels when the replacement is blocks)
-                const bool rawLight = rawFilter_ && rawFilter_(*t);
                 for (int kind = 0; kind < 3; ++kind)
                     if (!jb.z[kind]) jb.z[kind] = pick(kind, kind == 0 ? jb.file != nullptr
-                                                           : kind == 1 ? jb.light != nullptr && !rawLight
+                                                           : kind == 1 ? jb.light != nullptr
                                                                        : jb.normal != nullptr);
             }
         }
@@ -484,10 +479,6 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
             if (jb.normal) pngNormal(*jb.normal, jb.bc[2], t, o);
         }
     });
-    if (lightHook_)
-        across([&](std::size_t from, std::size_t to) {
-            for (std::size_t j = from; j < to; ++j) lightHook_(*ts[jobs[j].at], out[jobs[j].at]);
-        });
     // the refusals, here, once per key
     lk.lock();
     for (const Job& jb : jobs) {

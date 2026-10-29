@@ -149,15 +149,6 @@ struct View {
     // or the clock's in a day/night area - which is what the engine's own lit
     // path starts every vertex from (`sub_494E80`). It was black.
     float litBase = 0.0f;
-    // THE NIGHT (`CityGrades::nightOf`, the remaster's): under per-pixel
-    // lighting with the emitters' lights, the share of the SET's painted
-    // light (mode 3) and of a lit body's start that stays - the point lights
-    // add on top whole. 1 unless the remaster says otherwise.
-    float setDim = 1.0f;
-    // THE RELIEF (the remaster's B3, `[Remaster] relief = S`): the texture's
-    // brightness read as height, tilting the normal the POINT lights see -
-    // Vulkan's tiled module (`scene.frag`); 0 nothing.
-    float relief = 0.0f;
     // THE MIST (the remaster's A4, `[Remaster] mist = S`): a height fog in the
     // set's fog colour, thickest at `mistGround` (the set's dominant floor -
     // the game's Y points DOWN) and thinning over `mistHeight` above it,
@@ -248,12 +239,7 @@ struct View {
     // Up to this many, nearest first. Anekbah has 155 and a body is reached by
     // a handful; the cap is the uniform block's, and it is stated rather than
     // silently truncating in the middle of a street.
-    static constexpr int kMaxGpuLights = 64;
-    // ...of which the SET's own lights are at most this many - the eight the
-    // per-pixel enhancement always took; the rest are the remaster's point
-    // lights (`o3de/emitterlight.h`), on a renderer whose `maxPixelLights`
-    // says it has the room
-    static constexpr int kOwnGpuLights = 8;
+    static constexpr int kMaxGpuLights = 8;
     std::vector<GpuLight> lights;   // empty = light per vertex, as before
     // ...and THE LAMPS IN THE AIR (`volumetrics`, `todo/enhancements.md` 24),
     // an ENHANCEMENT: the same `.3DO` records, chosen for the CAMERA rather
@@ -263,11 +249,6 @@ struct View {
     // (`volumetricsLive`); nothing else reads it.
     static constexpr int kMaxAirLights = 16;
     std::vector<GpuLight> airLights;
-    // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): on a
-    // renderer that says `tilesLights`, EVERY emitters' point light the frame
-    // keeps, binned to screen tiles there - `lights` then holds the set's own
-    // alone. Empty unless the remaster's emitters' light is on.
-    std::vector<GpuLight> points;
 
     // ---------------------------------------------- THE SHIMMER's clock
     //
@@ -385,11 +366,6 @@ struct Draw {
     // `lightsFromBlack` stays for the flag; this is its value
     // (todo/drift-audit.md L1).
     float           lightBase        = 0.0f;
-    // THE BODY LIGHT (`o3de/lightprobe.h`, the remaster's A5): the start
-    // colour - the grey above, or the baked colour - multiplied by this,
-    // the painted light around the body. 1, 1, 1 on every draw unless the
-    // option is on AND the renderer says it draws it (`drawsBodyTint`).
-    float           lightTint[3]     = {1.0f, 1.0f, 1.0f};
     // A REFLECTING FLOOR's draw (`o3de/floorreflect.h`, the remaster's): its
     // triangles on the frame's reflection plane, adding the reflection as the
     // water does, at this times the pass's strength. 0 on every other draw;
@@ -457,9 +433,6 @@ public:
     // GLES): a set's load then decodes them ahead (`TexturePack::prepare`);
     // for one that never asks (the software reference) they would only wait
     virtual bool takesPack() const { return false; }
-    // whether it draws the RELIEF (`View::relief`, Vulkan): the pack's normal
-    // maps are decoded only for one that does (GLES never read them)
-    virtual bool drawsRelief() const { return false; }
     // up to `budget` of the listed textures uploaded; -> how many still wait
     virtual int preloadStep(int /*budget*/) { return 0; }
 
@@ -539,23 +512,6 @@ public:
     // ...asked for when the renderer is MADE (before `init`): a backend may
     // have to build its programs for it (GLES). False where there is none.
     virtual bool setWater(float /*strength*/) { return false; }
-    // THE BODY LIGHT (`o3de/lightprobe.h`): `Draw::lightTint` honoured on a
-    // posed body. Asked before `init` (GLES builds a variant of its posing
-    // programs); `drawsBodyTint` says afterwards whether it is drawn - the
-    // frontend hands a tint only then, so a backend without it draws exactly
-    // what it drew.
-    virtual bool setBodyTint(bool /*on*/) { return false; }
-    virtual bool drawsBodyTint() const { return false; }
-    // THE EMITTERS' LIGHT (`o3de/emitterlight.h`): point lights - a negative
-    // inner radius - honoured by the per-pixel lighting. Asked before `init`;
-    // the frontend adds the emitters' lights to a set's table only when
-    // `drawsEmitterLights`, so a backend without them lights what it lit.
-    virtual bool setEmitterLights(bool /*on*/) { return false; }
-    virtual bool drawsEmitterLights() const { return false; }
-    // how many of `View::lights` the per-pixel lighting reads
-    virtual int maxPixelLights() const { return View::kOwnGpuLights; }
-    // whether it bins `View::points` to tiles itself (`o3de/lighttiles.h`)
-    virtual bool tilesLights() const { return false; }
     // `planeY`: the water's height. The reflection pass DISCARDS what lies
     // below it per fragment - the CPU clip cannot see a posed body's place,
     // and a swimmer's legs were reflected above the water (a reader's play
@@ -722,10 +678,7 @@ enum RendererTakes : unsigned {
     kTakesBloom          = 1u << 7,    // setBloom
     kTakesGrade          = 1u << 8,    // setGrade
     kTakesWater          = 1u << 9,    // setWater, and the floors on its pass
-    kTakesBodyTint       = 1u << 10,   // setBodyTint
-    kTakesEmitterLights  = 1u << 11,   // setEmitterLights
     kTakesAmbientOcclusion = 1u << 12, // setAmbientOcclusion
-    kTakesRelief         = 1u << 13,   // drawsRelief
     kTakesMist           = 1u << 14,   // View::mist
     kTakesTrilinear      = 1u << 15,   // setTextureFilter(2): a mip chain at upload
     kTakesRain3d         = 1u << 16,   // the weather's drops drawn as strips in the scene (plain Draws; no water pass needed)

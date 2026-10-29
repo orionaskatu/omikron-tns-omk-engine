@@ -12,6 +12,35 @@ technical; it is the one `todo/enhancements.md` row 8 already wrote down - the
 baked vertex colour IS the artists' lighting, so the remaster must build on
 that look, never replace it.
 
+## REMOVED 2026-10-29, on the reader's request: body light, emitters' light, tiled lights, relief
+
+"bodylight and fxlight settings in the ini are really bad, can you totally
+remove these features?" Gone, code and keys - the sections below that describe
+them (A5, A5b, A5c, B3's relief, "the generated normal maps") are the history,
+not the state:
+
+* `[Remaster] bodylight` / `--body-light` (A5, `o3de/lightprobe`, `Draw::lightTint`,
+  the pose block's tint vec4), `[Remaster] fxlight` / `--fx-light` (A5b,
+  `o3de/emitterlight`: the emitters' point lights, the glowing surfaces, the
+  curated `lights.txt`, the night `night.txt`), the tiled point lights (A5c,
+  `o3de/lighttiles`, the Vulkan and D3D12 tile buffers, `scene.frag`'s
+  `-DOMK_TILED` module) and **`[Remaster] relief` / `--relief`**, which could
+  not stand alone: it only ran in the tiled module, on the point lights.
+* An old ini with the keys, or a command line with the flags, gets one stderr
+  line (`settings: bodylight no longer exists - ignored`) and runs. The rows are
+  off the options menu; `View::kMaxGpuLights` is 8 again (the set's own lights).
+* What stays: the water pass, the reflecting and wet floors, the 3D rain, the
+  mist, the bloom, the grades, the packs, the preload, `smooth`, `ao`, the
+  upscale; D3D12's water pass, wet floors and planar reflection (`5f9bd09`) are
+  as they were. Off, the frames are byte-identical to the commit before the
+  removal on Vulkan and D3D12 (street and rain street).
+* Dormant on purpose: the pack's `<key>_n.png` normal maps are still read by
+  `texpack` when asked (`setNormals`), but nothing asks and no backend draws
+  them (`texpack_tool normals` and `omktexpack.py materials` still make them);
+  `omktexpack.py grades` no longer writes `lights.txt` and `night.txt`, and a
+  grades folder that has them is read as before - the two files are ignored.
+  `texpack_tool lights` and `probe` went with their code.
+
 ## What it starts from
 
 `todo/enhancements.md` rows 0-13 are done: MSAA, supersampling, trilinear and

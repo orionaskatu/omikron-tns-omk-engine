@@ -167,9 +167,6 @@ struct PlayOptions {
     float mistFlag = -1.0f;       // --mist S, [Remaster] mist; < 0 = the settings'
     float upscaleFlag = -1.0f;    // --upscale F, [Remaster] upscale; < 0 = the settings'
     float preloadFlag = -1.0f;    // --preload M, [Remaster] preload; < 0 = the settings'
-    float bodyLightFlag = -1.0f;  // --body-light S, [Remaster] bodylight; < 0 = the settings'
-    float fxLightFlag = -1.0f;    // --fx-light S, [Remaster] fxlight; < 0 = the settings'
-    float reliefFlag = -1.0f;     // --relief S, [Remaster] relief; < 0 = the settings'
     float smoothFlag = -1.0f;     // --smooth S, [Remaster] smooth; < 0 = the settings'
     std::string smoothSkipFlag;   // --smooth-skip A,B, [Remaster] smoothskip; "" = the settings'
     float aoFlag = -1.0f;         // --ao S, [Remaster] ao; < 0 = the settings'
@@ -179,7 +176,7 @@ struct PlayOptions {
         return !texturePackFlag.empty() || !texturePackArg.empty() || !uiPackFlag.empty() || !fontPackFlag.empty() || !filmPackFlag.empty() ||
                !gradeFlag.empty() || !remasterFlag.empty() || !smoothSkipFlag.empty() || bloomFlag > 0.0f ||
                waterFlag > 0.0f || floorsFlag > 0.0f || wetFlag > 0.0f || rain3dFlag > 0.0f || mistFlag > 0.0f || upscaleFlag > 1.0f || preloadFlag > 0.0f ||
-               bodyLightFlag > 0.0f || fxLightFlag > 0.0f || reliefFlag > 0.0f || smoothFlag > 0.0f || aoFlag > 0.0f;
+               smoothFlag > 0.0f || aoFlag > 0.0f;
     }
     // `--dither 0|1`. NOT an enhancement: `sub_4638C0` sets D3DRENDERSTATE 26
     // (DITHERENABLE) to 1 on both device arms, so on is what the engine does.

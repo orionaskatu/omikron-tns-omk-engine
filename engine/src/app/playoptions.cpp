@@ -371,8 +371,8 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   [Remaster] bloom=S\n"
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
-"                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
-"                   --relief 2, --ao 2, --floors 1, --wet 1, --rain3d 1, --mist\n"
+"                   DIR/grades, --water 0.6,\n"
+"                   --ao 2, --floors 1, --wet 1, --rain3d 1, --mist\n"
 "                   0.5, --smooth\n"
 "                   0.75, --preload 25, the interface pack in DIR/ui/pack,\n"
 "                   the font pack in DIR/fonts/pack and the film pack in\n"
@@ -408,19 +408,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   set's lights, the sky darkening with the shower -\n"
 "                   brightness S (0..1); Vulkan and GLES only; [Remaster]\n"
 "                   rain3d=S\n"
-"  --body-light S   REMASTER, off by default: the bodies take the set's painted\n"
-"                   light around them, strength S (0..1); Vulkan and GLES only;\n"
-"                   [Remaster] bodylight=S\n"
-"  --fx-light S     REMASTER, off by default: the set's flames and glows light\n"
-"                   the bodies near them, strength S (0..4); Vulkan, Direct3D 12\n"
-"                   and GLES; [Remaster] fxlight=S\n"
 "  --ao S           REMASTER, off by default: ambient occlusion at contacts, from\n"
 "                   the frame's depth, strength S (0..4); Vulkan only (Direct3D 12\n"
 "                   has [Enhancements] ssao, the same effect);\n"
 "                   [Remaster] ao=S\n"
-"  --relief S       REMASTER, off by default: the textures' relief under the\n"
-"                   emitters' lights, strength S (0..4); Vulkan and Direct3D 12;\n"
-"                   [Remaster] relief=S\n"
 "  --smooth S       REMASTER, off by default: the characters ROUNDED - each\n"
 "                   triangle split 3x3 and pulled toward its corners' normals\n"
 "                   by S (0..1, 0.75 Phong's own); every backend; [Remaster]\n"
@@ -727,26 +718,10 @@ int PlayOptions::parse(int argc, char** argv) {
                 return 2;
             }
         }
-        else if (a == "--relief" && i + 1 < argc) {
-            reliefFlag = static_cast<float>(std::atof(argv[++i]));
-            if (reliefFlag < 0.0f || reliefFlag > 4.0f) {
-                std::fprintf(stderr, "--relief %s: not 0..4\n", argv[i]);
-                return 2;
-            }
-        }
-        else if (a == "--fx-light" && i + 1 < argc) {
-            fxLightFlag = static_cast<float>(std::atof(argv[++i]));
-            if (fxLightFlag < 0.0f || fxLightFlag > 4.0f) {
-                std::fprintf(stderr, "--fx-light %s: not 0..4\n", argv[i]);
-                return 2;
-            }
-        }
-        else if (a == "--body-light" && i + 1 < argc) {
-            bodyLightFlag = static_cast<float>(std::atof(argv[++i]));
-            if (bodyLightFlag < 0.0f || bodyLightFlag > 1.0f) {
-                std::fprintf(stderr, "--body-light %s: not 0..1\n", argv[i]);
-                return 2;
-            }
+        // removed 2026-10-29 on the reader's request: the flag and its value are taken and ignored, said once
+        else if ((a == "--relief" || a == "--fx-light" || a == "--body-light") && i + 1 < argc) {
+            ++i;
+            std::fprintf(stderr, "%s no longer exists - ignored\n", a.c_str());
         }
         else if (a == "--upscale" && i + 1 < argc) {
             upscaleFlag = static_cast<float>(std::atof(argv[++i]));

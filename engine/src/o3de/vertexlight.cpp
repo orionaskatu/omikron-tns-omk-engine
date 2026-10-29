@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "o3de/vertexlight.h"
-#include "o3de/emitterlight.h"
 
 #include <array>
-#include <algorithm>
 #include <cmath>
 #include <span>
 #include <vector>
@@ -31,10 +29,8 @@ const Light3do* strongestLightAt(const float p[3], std::span<const Light3do> lig
         const float dx = p[0] - l.pos[0], dy = p[1] - l.pos[1], dz = p[2] - l.pos[2];
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (!(d2 <= l.radiusA * l.radiusA)) continue;
-        // a POINT light's inner radius is negative (`o3de/emitterlight.h`)
-        const float rB = l.radiusB < 0.0f ? -l.radiusB : l.radiusB;
-        if (!(l.radiusA > rB)) continue;
-        float fall = 1.0f - (std::sqrt(d2) - rB) / (l.radiusA - rB);
+        if (!(l.radiusA > l.radiusB)) continue;
+        float fall = 1.0f - (std::sqrt(d2) - l.radiusB) / (l.radiusA - l.radiusB);
         if (fall > 1.0f) fall = 1.0f;
         const float k = l.f32 * 256.0f * fall;
         if (k > bestK) { bestK = k; best = &l; }
@@ -55,28 +51,15 @@ bool reachOf(const Light3do& l, const float bodyPos[3], float out[3]) {
     const float dz = bodyPos[2] - l.pos[2];
     const float d2 = dx * dx + dy * dy + dz * dz;
     if (!(d2 <= l.radiusA * l.radiusA)) return false;
-    // THE REMASTER'S POINT LIGHT (`o3de/emitterlight.h`): a NEGATIVE inner
-    // radius - no shipped record has one - shines from the light to the body
-    // rather than along the record's direction; the falloff from |inner|
-    const bool point = l.radiusB < 0.0f;
-    const float rB = point ? -l.radiusB : l.radiusB;
-    if (!(l.radiusA > rB)) return false;   // a degenerate pair lights nothing
+    if (!(l.radiusA > l.radiusB)) return false;   // a degenerate pair lights nothing
 
     float k = l.f32 * 256.0f;
     const float d = std::sqrt(d2);
     // the linear falloff from the inner radius to the outer, clamped
-    float fall = 1.0f - (d - rB) / (l.radiusA - rB);
+    float fall = 1.0f - (d - l.radiusB) / (l.radiusA - l.radiusB);
     if (fall > 1.0f) fall = 1.0f;
     k *= fall;
     if (!(k > 0.0f)) return false;
-    if (point) {
-        // nothing at its own housing (`o3de/emitterlight.h` kSelfNear/Far),
-        // and the falloff SQUARED - pools of light
-        k *= fall * std::clamp((d - kSelfNear) / (kSelfFar - kSelfNear), 0.0f, 1.0f);
-        if (!(k > 0.0f) || !(d > 0.0f)) return false;
-        out[0] = dx / d * k; out[1] = dy / d * k; out[2] = dz / d * k;
-        return true;
-    }
     out[0] = l.dir[0] * k; out[1] = l.dir[1] * k; out[2] = l.dir[2] * k;
     return true;
 }

@@ -13,7 +13,6 @@ void poseGeometry(const Draw& d, Geometry& out, const PoseParts& parts) {
     CornerLight lights[64];
     const int nl = prepareLights(d, parts.lights < 64 ? parts.lights : 64, lights);
     const bool lit = relit(d, nl) && parts.lights > 0;
-    const bool tint = tinted(d);
     for (std::size_t i = 0; i < out.corners.size(); ++i) {
         const Corner& rc = d.geo->corners[i];
         Corner& c = out.corners[i];
@@ -36,9 +35,6 @@ void poseGeometry(const Draw& d, Geometry& out, const PoseParts& parts) {
             const float n[3] = {c.nx, c.ny, c.nz};
             lightCorner(n, lights, nl, rgb);
             c.r = rgb[0]; c.g = rgb[1]; c.b = rgb[2];
-        } else if (tint && parts.lights > 0) {
-            // an unlit body takes the tint on its baked colour, as `scene.vert`
-            c.r = rc.r * d.lightTint[0]; c.g = rc.g * d.lightTint[1]; c.b = rc.b * d.lightTint[2];
         }
     }
 }

@@ -59,7 +59,6 @@
 #include "script/props.h"
 #include "o3de/raster.h"
 #include "o3de/render.h"
-#include "o3de/lightprobe.h"
 #include "o3de/renderer.h"
 #include "platform/boot.h"
 #include "platform/movie.h"
@@ -260,7 +259,6 @@ struct Staged {
     int   lightCount = 0;
     bool  lightsBlack = false;
     float lightBase = 0.0f;      // ...from this grey, the set's ambient (L1)
-    float lightTint[3] = {1.0f, 1.0f, 1.0f};   // ...times the body light's (`o3de/lightprobe.h`)
     bool  litTold = false;       // the first lit frame said in the log
     float drawAt[3] = {0, 0, 0};   // where he was actually put, for a set piece
     bool  drawAtKnown = false;     // ...and whether a frame has put him yet
@@ -466,7 +464,6 @@ struct PedStaged {
     int   lightCount = 0;
     bool  lightsBlack = false;
     float lightBase = 0.0f;      // ...from this grey, the set's ambient (L1)
-    float lightTint[3] = {1.0f, 1.0f, 1.0f};   // ...times the body light's (`o3de/lightprobe.h`)
     // THE WALKER'S OWN POSE BUFFER, kept across frames: `composePose`
     // fills it in place (todo/optimization.md step 18's leftovers) where
     // it built a fresh vector for every body every frame.
@@ -710,7 +707,6 @@ struct WorldSlot {
     omk::FloorPlanes floors; // ...and its reflecting floors (`o3de/floorreflect.h`), when on
     omk::WetFloors wet;      // ...and its floors under the open sky (`o3de/wetfloor.h`), when on
     float ground = 0.0f;     // its dominant floor's height - the mist's (`omk::groundLevel`)
-    omk::LightProbes probes; // the remaster's body light (`o3de/lightprobe.h`), built when on
     omk::TriangleSoup soup;      // its WALKABLE soup: the feet's decor probe
     // and the faces PAST the slope limit: `Walk_GroundResponse` stands the
     // actor on a steep face and slides him off it, so dropping them made a
@@ -746,9 +742,6 @@ struct WorldSlot {
     // them and the street's moving population receives them - the static
     // set is shaded by a colour baked into every vertex and needs none.
     std::vector<omk::Light3do> lights;
-    std::size_t setLights = 0;   // ...the set's own, before the emitters' (`o3de/emitterlight.h`)
-    std::vector<omk::Light3do> fxSurface;   // ...its glowing SURFACES' (the pack's light maps), after them
-    bool fxIn = false;   // ...the emitters' and surfaces' in `lights` (the remaster's switch, part B)
     // ...and its AMBIENT grey, the byte `Read3DO_Init` writes into the
     // scene's `+416` (`(int64)(desc+184 * 255.0)`): what a lit vertex starts
     // from (todo/drift-audit.md L1)

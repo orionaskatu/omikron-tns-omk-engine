@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE REMASTER'S GLES SHADERS (`todo/remaster.md`) - the post pass (bloom,
-// grade), the scene programs' variants (bloom, water, point lights, body
-// tint) and FSR 1 (EASU, RCAS). Included by `glesrender.cpp` at namespace
+// grade), the scene programs' variants (bloom, water) and FSR 1 (EASU, RCAS). Included by `glesrender.cpp` at namespace
 // scope under OMK_REMASTER only, so a build without it carries none of them.
 // Not compiled on its own.
 
@@ -332,67 +331,6 @@ std::string waterVariant(const std::string& frag) {
     const auto mp = s.find(m);
     if (mp != std::string::npos) s.insert(mp + m.size(), "\n    if (uClip != 0 && vWy > uClipY) discard;");
     else anchorMissed("water", m);
-    return s;
-}
-
-// THE EMITTERS' LIGHT's variant of the ENHANCED fragment program
-// (`o3de/emitterlight.h`, the remaster's A5b): a light whose inner radius is
-// negative is a POINT light, shining from it to the fragment. Made at `init`
-// only when asked - the enhanced program the Vita may cache is untouched.
-std::string pointLightVariant(const std::string& frag) {
-    std::string s = frag;
-    const auto rep = [&](const std::string& from, const std::string& to, bool all) {
-        int n = 0;
-        for (auto at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size())) {
-            s.replace(at, from.size(), to);
-            ++n;
-            if (!all) break;
-        }
-        if (n == 0) anchorMissed("emitters' light", from);
-    };
-    rep("vec3 litColour(vec3 n, vec3 w) {", "vec3 litColour(vec3 n, vec3 w, bool po) {", false);
-    // ...and room for 64 lights, the set's 8 and the remaster's points
-    rep("uniform vec4  uPL[24];", "uniform vec4  uPL[192];", false);
-    rep("for (int i = 0; i < 8; ++i) {\n        if (float(i) >= uPLCount) break;",
-        "for (int i = 0; i < 64; ++i) {\n        if (float(i) >= uPLCount) break;", false);
-    rep("litColour(normalize(vNrm), vWorld)", "litColour(normalize(vNrm), vWorld, false)", true);
-    rep("if (pa.w <= db.w) continue;          // a degenerate pair lights nothing\n"
-        "        float fall = min(1.0 - (sqrt(d2) - db.w) / (pa.w - db.w), 1.0);",
-        "if (po && db.w >= 0.0) continue;\n"
-        "        float rB = abs(db.w);\n"
-        "        if (pa.w <= rB) continue;\n"
-        "        float fall = min(1.0 - (sqrt(d2) - rB) / (pa.w - rB), 1.0);", false);
-    // a point light shines from it to the fragment, and WRAPS 0.3 round
-    rep("float t = -dot(n, db.xyz * k);",
-        "vec3 dir = db.w < 0.0 ? (d2 > 0.0 ? d / sqrt(d2) : vec3(0.0)) : db.xyz;\n"
-        "        float t = db.w < 0.0 ? k * fall * clamp((sqrt(d2) - 30.0) / 60.0, 0.0, 1.0) * (0.3 + 0.7 * max(-dot(n, dir), 0.0))"
-        " : -dot(n, db.xyz * k);", false);
-    // ...and MODE 3, a set lit by the point lights alone; and the NIGHT,
-    // `uSetDim` (View::setDim), on the painted and the start light of all three
-    rep("vec3 litColour(vec3 n, vec3 w, bool po) {", "uniform float uSetDim;\nvec3 litColour(vec3 n, vec3 w, bool po) {", false);
-    rep("min(vCol + litColour(normalize(vNrm), vWorld, false)", "min(vCol * uSetDim + litColour(normalize(vNrm), vWorld, false)", true);
-    rep("min(vec3(uLitBase) + litColour(normalize(vNrm), vWorld, false)",
-        "min(vec3(uLitBase) * uSetDim + litColour(normalize(vNrm), vWorld, false)", true);
-    rep("if (uLit > 1.5) shade =",
-        "if (uLit > 2.5) shade = min(vCol * uSetDim + litColour(normalize(vNrm), vWorld, true), vec3(1.0));\n"
-        "    else if (uLit > 1.5) shade =", false);
-    return s;
-}
-
-// THE BODY LIGHT's variant of a posing program (`o3de/lightprobe.h`, the
-// remaster's A5): the start colour - the grey or the baked colour - times
-// `uLightTint`. Made at `init` only when asked, as the water's is.
-std::string tintVariant(const std::string& vert) {
-    std::string s = "uniform vec3 uLightTint;\n" + vert;
-    const std::string unlit = "vCol = aCol + vec3(wave);";
-    const auto u = s.find(unlit);
-    if (u != std::string::npos) s.replace(u, unlit.size(), "vCol = aCol * uLightTint + vec3(wave);");
-    const std::string lit = "vec3 lit = uLightBlack > 0.5 ? vec3(uLightBase) : aCol;";
-    const auto l = s.find(lit);
-    if (l != std::string::npos)
-        s.replace(l, lit.size(), "vec3 lit = (uLightBlack > 0.5 ? vec3(uLightBase) : aCol) * uLightTint;");
-    // the plain posing program has the first, the enhanced one both
-    if (u == std::string::npos && l == std::string::npos) anchorMissed("body light", unlit);
     return s;
 }
 

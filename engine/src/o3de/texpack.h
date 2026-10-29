@@ -103,8 +103,9 @@ struct PackImage {
     // THE NORMAL MAP (`<key>_n.png`, `todo/remaster.md` B3, `o3de/normalmap.h`):
     // RGBA8 `nw x nh` - the normal in OpenGL's convention, the height in A
     // (kept at 1 or more: the shader reads alpha 0 as "none"). Decoded only
-    // when the session asked (`setNormals`) and with the colour; only the
-    // RELIEF reads it.
+    // when the session asked (`setNormals`) and with the colour; nothing asks
+    // since the relief was removed (2026-10-29) and no backend draws it - the
+    // pack format and `texpack_tool normals` keep it.
     int nw = 0, nh = 0;
     std::vector<std::uint8_t> normal;
     PackBlocks colourZ, emissiveZ, normalZ;
@@ -140,13 +141,13 @@ public:
     std::size_t normalMaps() const { return normals_.size(); }
     // the replacements `exclude.txt` left out (the curation, B2)
     std::size_t excluded() const { return excluded_; }
-    // decode the NORMAL MAPS too (the relief's; each another PNG the size of
+    // decode the NORMAL MAPS too (nothing asks now; each another PNG the size of
     // its colour) - off unless asked
     void setNormals(bool on) { wantNormals_ = on; }
     bool normals() const { return wantNormals_; }
     // decode the LIGHT MAPS with the colours (`colour` true): the bloom's -
     // on unless the session says no bloom will read them. The light maps
-    // alone (`colour` false, the surface lights') are decoded either way.
+    // alone (`colour` false) are decoded either way.
     void setLights(bool on) { wantLights_ = on; }
     // the block formats the backend samples (`PackCodec` bits, 0 none - the
     // default: PNGs only)
@@ -165,11 +166,9 @@ public:
     // the lookups and the refusals on the caller's thread. A null entry is
     // skipped. What a backend calls when a pool reaches it: decoding 31
     // replacements one after another took 634 ms on the street (M3).
-    // `colour` false: the LIGHT MAPS alone (and the hook) - the colour PNGs, a
-    // texture's 1024x1024, are not decoded. The surface lights' way
-    // (`o3de/emitterlight.h`): a set's load had cost ~110 ms more for them.
-    // `normals` false: none of the normal maps, whatever `setNormals` said -
-    // a backend that draws no relief (GLES).
+    // `colour` false: the LIGHT MAPS alone - the colour PNGs, a texture's
+    // 1024x1024, are not decoded.
+    // `normals` false: none of the normal maps, whatever `setNormals` said.
     // THREAD-SAFE against itself and `aliasGrey`: a set loads on a
     // BackgroundJob while the renderer's pool is decoded on the main thread.
     // `pooled` false: decoded on the CALLER's thread alone - `prepare`'s, from
@@ -204,20 +203,9 @@ public:
     std::size_t parkedBytes() const;
     std::size_t parkedTaken() const;   // results handed over from `prepare` so far
 
-    // THE LIGHT MAPS AMENDED after the decode (`o3de/emitterlight.h`
-    // curateBloom, the remaster's curated light sources): called once a
-    // texture, on the pool - it must be thread-safe - with the result so far.
-    using LightHook = void (*)(const Texture&, PackImage&);
-    // `raw`: the textures the hook paints into - their LIGHT MAPS decoded
-    // from the PNGs whatever the codecs, the hook working on pixels (their
-    // colours may still be blocks: the hook then reads the shipped texels)
-    using RawFilter = bool (*)(const Texture&);
-    void setLightHook(LightHook h, RawFilter raw = nullptr) { lightHook_ = h; rawFilter_ = raw; }
 
 private:
     void clear();
-    LightHook lightHook_ = nullptr;
-    RawFilter rawFilter_ = nullptr;
     unsigned codecs_ = 0;
     // [bc, astc][colour, light, normal]: key -> its KTX2
     std::unordered_map<std::uint64_t, std::string> ktx_[2][3];

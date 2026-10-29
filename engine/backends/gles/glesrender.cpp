@@ -983,12 +983,12 @@ public:
     const Surface& readback() override;
     RasterStats stats() const override { return st_; }
     const char* name() const override { return "gles2"; }
-    // all but the ambient occlusion, the relief and the mist (`Renderer::takes`)
+    // all but the ambient occlusion and the mist (`Renderer::takes`)
     unsigned takes() const override {
         return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
                omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesUpscale |
-               omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater | omk::kTakesBodyTint |
-               omk::kTakesEmitterLights | omk::kTakesTrilinear | omk::kTakesRain3d;
+               omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater |
+               omk::kTakesTrilinear | omk::kTakesRain3d;
     }
     // TEXTURE FILTERING (renderer.h): 0 nearest, 1 bilinear - what the
     // original's HARDWARE device drew, MAG/MIN LINEAR with MIP NONE
@@ -1027,22 +1027,6 @@ public:
         waterWant_ = s < 0.0f ? 0.0f : s > 1.0f ? 1.0f : s;
         return true;
     }
-    // THE BODY LIGHT, before `init` too (its posing program's variant)
-    bool setBodyTint(bool on) override {
-        if (prog_) return false;
-        tintWant_ = on;
-        return true;
-    }
-    // asked is drawn: a body this posing program cannot take is posed on the
-    // CPU by the frontend, which tints its corners itself
-    bool drawsBodyTint() const override { return tintWant_; }
-    // THE EMITTERS' LIGHT, before `init` too (the enhanced fragment's variant)
-    bool setEmitterLights(bool on) override {
-        if (prog_) return false;
-        fxWant_ = on;
-        return true;
-    }
-    bool drawsEmitterLights() const override { return fxWant_; }
     bool takesPack() const override { return true; }
     bool drawsWater() const override { return waterWant_ > 0.0f && mainLoc_.water >= 0; }
     bool drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
@@ -1051,7 +1035,6 @@ public:
     // ...and the city grade, any time: n^3 RGB 0..1, red fastest
     bool setGrade(const float* rgb, int n) override;
 #endif
-    int maxPixelLights() const override { return fxWant_ && pixLights_ ? View::kMaxGpuLights : View::kOwnGpuLights; }
     int anisotropy() const { return anisoOn_; }
     // SUPERSAMPLING (`todo/enhancements.md` 9): the world drawn `n` times
     // larger each way and averaged down - in `readback` on the CPU and in the
@@ -1320,8 +1303,6 @@ private:
         GLint mist = -1;                                                     // ...and the mist
         GLint dust = -1, dustColour = -1;                                    // ...and the sand's dust
         GLint veil = -1, veilColour = -1;                                    // ...and the rain's veils
-        GLint tint = -1;   // the body light's variant
-        GLint setDim = -1; // the emitters' light's variant: the night
     };
     SceneLoc mainLoc_, posedLoc_;
     GLuint curProg_ = 0;
@@ -1400,7 +1381,6 @@ private:
         float grey = -1;
         // the posed program's lights
         int lights = -1; float lightBlack = -1, lightBase = -1; std::vector<float> lightVals;
-        float tint[3] = {-1, -1, -1};
         float water = -1; int clip = -1;   // the water variant's
         float wet = -1, rain = -1, rippleClock = -1;   // ...a wet floor's film, its ripples
         float snow = -1;                               // ...or snow lying
@@ -1514,16 +1494,13 @@ private:
     float  veil_[4] = {0.0f, 0.0f, 2500.0f, 0.0f}, veilColour_[3] = {0.0f, 0.0f, 0.0f};   // View::veil
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources...
     std::string waterVertX_, waterPosedVertX_; // ...over the enhanced ones
-    bool tintWant_ = false;                    // the body light's (`setBodyTint`)
-    bool fxWant_ = false;                      // the emitters' light's (`setEmitterLights`)
-    std::string tintPosedVert_, tintPosedVertX_;   // ...its posing programs' sources (plain, enhanced)
     GLuint reflFbo_ = 0, reflTex_ = 0, reflDepth_ = 0, passFbo_ = 0;
     int    reflW_ = 0, reflH_ = 0;
 #else
     static constexpr float  bloom_ = 0.0f, waterWant_ = 0.0f;
     static constexpr bool   bloomBuilt_ = false;
     static constexpr GLuint lightBlack_ = 0, postProg_ = 0, passFbo_ = 0;
-    static constexpr bool   waterNow_ = false, reflectingNow_ = false, reflHalf_ = false, fxWant_ = false;
+    static constexpr bool   waterNow_ = false, reflectingNow_ = false, reflHalf_ = false;
     static constexpr int    lutN_ = 0;
 #endif
     bool   lightMapNow_ = false;         // a draw of this pass bound a light map: else the glow is black
@@ -1531,9 +1508,9 @@ private:
     // ---- THE REMASTER'S HOOKS (`glesrender_remaster.inl`; stubs at the end
     // of this file without OMK_REMASTER) ------------------------------------
     // the scene and posing programs' sources through the variants asked for
-    void remasterSources(bool pointLit, const char*& sceneFragX, const char*& sceneFrag, const char*& vSceneX,
+    void remasterSources(const char*& sceneFragX, const char*& sceneFrag, const char*& vSceneX,
                          const char*& vScene, const char*& vPosedX, const char*& vPosed);
-    void remasterProgramUniforms(bool pointLit);   // ...their starting uniforms, once linked
+    void remasterProgramUniforms();                // ...their starting uniforms, once linked
     void remasterRelease();                        // its GL objects, at the renderer's end
     void remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCache& U, bool uv);   // a draw's water, floor, clip
     bool remasterWantsNormals(const Draw& d) const;   // a plain draw's normals for the remaster (a wet body's sheen)
@@ -1620,8 +1597,6 @@ bool GlesRenderer::linkScene() {
     // enhancement is asked for; a context that cannot build them keeps the
     // defaults and refuses both (`drawsPixelLights` / `drawsShadowMap`)
     bool enhanced = false;
-    const bool enh = wantPixLights_ || wantShadowMap_;
-    const bool pointLit = fxWant_ && enh;   // only the enhanced ones light per pixel
     // the remaster's VARIANTS over both program sets (`glesrender_remaster.inl`
     // remasterSources); the sources as they are without OMK_REMASTER
     const char* sceneFragX = kSceneFragX;
@@ -1630,7 +1605,7 @@ bool GlesRenderer::linkScene() {
     const char* vScene = kSceneVert;
     const char* vPosedX = kPosedVertX;
     const char* vPosed = kPosedVert;
-    remasterSources(pointLit, sceneFragX, sceneFrag, vSceneX, vScene, vPosedX, vPosed);
+    remasterSources(sceneFragX, sceneFrag, vSceneX, vScene, vPosedX, vPosed);
     if (wantPixLights_ || wantShadowMap_) {
         prog_ = link(vSceneX, sceneFragX, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
                                                 {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"},
@@ -1659,7 +1634,7 @@ bool GlesRenderer::linkScene() {
                        {kAttrPhase, "aPhase"}, {kAttrSlot, "aSlot"}, {kAttrNormal, "aNormal"}});
         if (!posed_) std::fprintf(stderr, "gles: no posing program - bodies are posed on the CPU\n");
     }
-    remasterProgramUniforms(pointLit);   // the variants' starting uniforms
+    remasterProgramUniforms();   // the variants' starting uniforms
     uMvp_       = glGetUniformLocation(prog_, "uMvp");
     uTexSize_   = glGetUniformLocation(prog_, "uTexSize");
     uClock_     = glGetUniformLocation(prog_, "uShimmerClock");
@@ -1706,8 +1681,6 @@ bool GlesRenderer::linkScene() {
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");
         L.eye = glGetUniformLocation(p, "uEye");
-        L.tint = glGetUniformLocation(p, "uLightTint");
-        L.setDim = glGetUniformLocation(p, "uSetDim");
         L.caster = glGetUniformLocation(p, "uCaster");
         L.pl = glGetUniformLocation(p, "uPL");
         L.plCount = glGetUniformLocation(p, "uPLCount");
@@ -2950,7 +2923,7 @@ void GlesRenderer::beginPass(const View& view) {
     if (pixLights_ || shadowMap_) {
         float pl[View::kMaxGpuLights * 12] = {};
         const int nl = pixLights_ ? static_cast<int>(std::min<std::size_t>(
-                                        view.lights.size(), static_cast<std::size_t>(maxPixelLights())))
+                                        view.lights.size(), static_cast<std::size_t>(View::kMaxGpuLights)))
                                   : 0;
         for (int i = 0; i < nl; ++i) {
             const auto& l = view.lights[static_cast<std::size_t>(i)];
@@ -2965,7 +2938,6 @@ void GlesRenderer::beginPass(const View& view) {
             glUseProgram(p);
             if (L.pl >= 0 && nl > 0) glUniform4fv(L.pl, 3 * nl, pl);
             if (L.plCount >= 0) glUniform1f(L.plCount, static_cast<float>(nl));
-            if (L.setDim >= 0) glUniform1f(L.setDim, view.setDim);   // the night (a variant's)
             if (L.shadowP >= 0) glUniform4fv(L.shadowP, 1, sp);
             if (L.lightMvp >= 0) glUniformMatrix4fv(L.lightMvp, 1, GL_FALSE, lightMvp_);
         }
@@ -3294,10 +3266,6 @@ void GlesRenderer::submit(const Draw& d) {
         if (set(!uv || U.lightBase != d.lightBase)) {
             glUniform1f(L.lightBase, d.lightBase);
             U.lightBase = d.lightBase;
-        }
-        if (L.tint >= 0 && set(!uv || std::memcmp(U.tint, d.lightTint, sizeof U.tint) != 0)) {
-            glUniform3f(L.tint, d.lightTint[0], d.lightTint[1], d.lightTint[2]);
-            std::memcpy(U.tint, d.lightTint, sizeof U.tint);
         }
     }
 
@@ -4075,9 +4043,9 @@ void glesSetWindowTarget(Renderer* r, unsigned fbo) {
 #else
 void GlesRenderer::runPost() {}
 void GlesRenderer::fsrPass(int) {}
-void GlesRenderer::remasterSources(bool, const char*&, const char*&, const char*&, const char*&, const char*&,
+void GlesRenderer::remasterSources(const char*&, const char*&, const char*&, const char*&, const char*&,
                                    const char*&) {}
-void GlesRenderer::remasterProgramUniforms(bool) {}
+void GlesRenderer::remasterProgramUniforms() {}
 bool GlesRenderer::remasterInitUpscale() { return true; }
 void GlesRenderer::remasterInitCodecs() {}
 bool GlesRenderer::packActive() const { return false; }

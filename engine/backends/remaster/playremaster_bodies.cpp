@@ -124,13 +124,4 @@ void PlayState::remasterFeetLatched(const std::vector<omk::MeshPose>& pose) {
     for (const auto& c : g.corners) remasterOtherFeet_ = std::max(remasterOtherFeet_, c.y);
 }
 
-void PlayState::bodyTint(const float p[3], float out[3]) const {
-    out[0] = out[1] = out[2] = 1.0f;
-    if (bodyLight <= 0.0f || !world_ || !world_->drawsBodyTint() || !session_) return;
-    const WorldSlot& ws = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
-    // the grey every body starts from: the active scene's (`+416`)
-    const float base = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
-    if (ws.probes.built()) ws.probes.tint(p, bodyLight, base, out);
-}
-
 #endif  // OMK_REMASTER

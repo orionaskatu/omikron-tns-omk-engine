@@ -1,10 +1,4 @@
 #version 450
-#ifdef OMK_DX
-// THE DIRECT3D 12 BUILD has no second module: the tiled point lights, the relief and the water's
-// lookups are always in it, switched by the frame's uniforms (`lg.tiles`, `lg.fx.x`, the push
-// block's water bits) - `d3d12render.cpp` binds empty descriptors where a frame has none
-#define OMK_TILED
-#endif
 #ifdef OMK_RT
 // HYBRID RAY TRACING (`todo/enhancements.md` 19): the -DOMK_RT build, both
 // backends' (`rt.glsl`; the descriptor sets are `OMK_RT_SET`'s three).
@@ -124,19 +118,9 @@ layout(set = 0, binding = 1) uniform sampler2D emis;
 // water plane (black unless a water pass made one); read only by water draws
 layout(set = 0, binding = 2) uniform sampler2D refl;
 #else
-// ...Direct3D 12's is the FRAME's, in the table that holds the shadow map (set 1, binding 5: t5)
-layout(set = 1, binding = 5) uniform sampler2D refl;
+// ...Direct3D 12's is the FRAME's, in the table that holds the shadow map (set 1, binding 3: t3)
+layout(set = 1, binding = 3) uniform sampler2D refl;
 #endif
-#ifdef OMK_TILED
-// THE NORMAL MAP (the pack's `<key>_n.png`, the remaster's B3) - the relief's;
-// a flat one of ALPHA 0 where the texture has none (Direct3D 12: the texture's second descriptor, t1)
-#ifdef OMK_DX
-layout(set = 0, binding = 1) uniform sampler2D nmap;
-#else
-layout(set = 0, binding = 3) uniform sampler2D nmap;
-#endif
-#endif
-
 // ---- the MAPPED shadow, `todo/enhancements.md` 6 - an ENHANCEMENT ----------
 //
 // Set 1 is per FRAME, not per texture: the light's transform and the depth
@@ -168,14 +152,13 @@ struct GpuLight {
     vec4 colourI;   // rgb colour 0..1, a intensity
 };
 layout(set = 1, binding = 2) uniform Lights {
-    GpuLight l[64];    // View::kMaxGpuLights
+    GpuLight l[8];     // View::kMaxGpuLights
     int   count;
     float base;        // View::litBase - the scene's +416, what a lit batch starts from
     int   grey;        // View::grey - the greyscale bank, ops 150/151
-    int   tiles;       // 1: the TILED point lights below are bound (`o3de/lighttiles.h`)
-    vec4  eye;         // the camera, for the water's Fresnel (xyz); w the NIGHT, View::setDim
-    vec4  fx;          // x: the RELIEF's strength (View::relief) - the tiled module's alone;
-                       // y, z, w: the MIST's strength, ground and height (View::mist...), both
+    int   pad0;        // unused: std140 puts the vec4 below on a 16-byte boundary
+    vec4  eye;         // the camera, for the water's Fresnel (xyz)
+    vec4  fx;          // x unused; y, z, w: the MIST's strength, ground and height (View::mist...), both
     vec4  dust;        // THE SAND'S DUST (View::dust): strength, the drift's x and z, the distance scale
     vec4  dustColour;  // ...its colour, lit as the scene (rgb)
     vec4  veil;        // THE RAIN'S VEILS (View::veil): strength, the fall's offset, the distance scale;
@@ -223,44 +206,10 @@ layout(std430, set = OMK_RT_SET, binding = 4) buffer RtCount { uint n[]; } rtCou
 #endif
 
 
-// THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): every point
-// light of the frame, and the screen's 32-pixel tiles cut in 16 depth slices -
-// [0] across, [1] down, [2] slices, [3] the tile's size, two words a cluster
-// (its list's offset, its count), then the lists
-//
-// COMPILED TWICE (the Makefile's `scene_tiled.frag.inc`, -DOMK_TILED): these
-// buffers and the loop that reads them only in the TILED module, which the
-// backend binds only on a frame whose tiles are on. Present but never run,
-// they still changed a plain frame through MoltenVK - a cutout sign's keyed
-// texels drew dark (4317 pixels in Qalisar, 2026-10-20) - so the default
-// module is the one without them.
-#ifdef OMK_TILED
-layout(std430, set = 1, binding = 3) readonly buffer Points { GpuLight p[]; } pts;
-layout(std430, set = 1, binding = 4) readonly buffer Tiles { uint t[]; } tl;
-#endif
-// (the fragment's VIEW depth, the fog's - declared here for the tiles' slice)
+// (the fragment's VIEW depth, the fog's)
 layout(location = 2) in float vDepth;
 
-// one POINT light (a negative inner radius, `o3de/emitterlight.h`): from the
-// light to the fragment, the falloff from |inner| squared, nothing at its own
-// housing (30 to 90 units), 0.3 wrapped round the far side
-vec3 pointLit(vec3 n, vec3 w, GpuLight L) {
-    vec3  d  = w - L.posA.xyz;
-    float d2 = dot(d, d);
-    float rA = L.posA.w, rB = abs(L.dirB.w);
-    if (d2 > rA * rA || rA <= rB) return vec3(0.0);
-    float fall = min(1.0 - (sqrt(d2) - rB) / (rA - rB), 1.0);
-    float k = L.colourI.a * 256.0 * fall;
-    if (k <= 0.0 || d2 <= 0.0) return vec3(0.0);
-    vec3 dir = d / sqrt(d2);
-    float t = k * fall * clamp((sqrt(d2) - 30.0) / 60.0, 0.0, 1.0) * (0.3 + 0.7 * max(-dot(n, dir), 0.0));
-    if (t <= 0.0) return vec3(0.0);
-    return min(t * L.colourI.rgb / 256.0, vec3(1.0));
-}
-
-// `pointsOnly`: the remaster's mode 3 - a SET lit by the emitters' point
-// lights alone (its own lights are already in its baked colour)
-vec3 litColour(vec3 n, vec3 w, bool pointsOnly) {
+vec3 litColour(vec3 n, vec3 w) {
     vec3 c = vec3(0.0);
     for (int i = 0; i < lg.count; ++i) {
         vec3  p  = lg.l[i].posA.xyz;
@@ -268,12 +217,6 @@ vec3 litColour(vec3 n, vec3 w, bool pointsOnly) {
         vec3  d  = w - p;
         float d2 = dot(d, d);
         if (d2 > rA * rA) continue;      // the engine's own reach test
-        // THE REMASTER'S POINT LIGHT (`o3de/emitterlight.h`): a negative
-        // inner radius - no shipped light has one - shines from the light to
-        // the fragment, the falloff from |inner|
-        bool point = rB < 0.0;
-        if (pointsOnly && !point) continue;
-        rB = abs(rB);
         if (rA <= rB) continue;          // a degenerate pair lights nothing
         float fall = 1.0 - (sqrt(d2) - rB) / (rA - rB);
         fall = min(fall, 1.0);
@@ -281,36 +224,14 @@ vec3 litColour(vec3 n, vec3 w, bool pointsOnly) {
         if (k <= 0.0) continue;
         // `-(N.L)`, with the falloff folded into L exactly as the engine
         // folds `v46` in before the dot.
-        vec3 dir = point ? (d2 > 0.0 ? d / sqrt(d2) : vec3(0.0)) : lg.l[i].dirB.xyz;
-        float t = -dot(n, dir * k);
-        // ...and a point light WRAPS 0.3 of itself round to the far side, as
-        // the walls about a flame would bounce it
-        // (and nothing at its own housing: 30 to 90 units, `o3de/emitterlight.h`)
-        // ...and its falloff SQUARED - pools of light, dark between them
-        if (point) t = k * fall * clamp((sqrt(d2) - 30.0) / 60.0, 0.0, 1.0) * (0.3 + 0.7 * max(-dot(n, dir), 0.0));
+        float t = -dot(n, lg.l[i].dirB.xyz * k);
         if (t <= 0.0) continue;
         // ...and the ramp, `(t * c) >> 8` per channel, saturating.
         c += min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
     }
-    // ...and the frame's TILED point lights, this fragment's tile's alone - in
-    // the water's reflection pass too, its tiles binned for ITS camera (its
-    // own set 1); the reflections were unlit by them before (2026-10-21)
-#ifdef OMK_TILED
-    if (lg.tiles != 0) {
-        uint across = tl.t[0], down = tl.t[1];
-        uvec2 tc = uvec2(gl_FragCoord.xy) / max(tl.t[3], 1u);   // the tile's size, by resolution
-        // the depth slice: `depthSlice` in `o3de/lighttiles.cpp`, the same
-        // log spacing from 50 to 20000 units
-        int sl = vDepth > 50.0 ? clamp(int(log(vDepth / 50.0) / log(400.0) * 16.0), 0, 15) : 0;
-        if (tc.x < across && tc.y < down) {
-            uint h = 4u + 2u * ((uint(sl) * down + tc.y) * across + tc.x);
-            uint off = tl.t[h], cnt = tl.t[h + 1u];
-            for (uint q = 0u; q < cnt; ++q) c += pointLit(n, w, pts.p[tl.t[off + q]]);
-        }
-    }
-#endif
     return min(c, vec3(1.0));
 }
+
 
 layout(location = 0) in vec2 vUV;
 layout(location = 1) in vec3 vCol;
@@ -558,48 +479,6 @@ vec3 rtReflect(vec3 c) {
 }
 #endif
 
-#ifdef OMK_TILED
-// THE RELIEF (the remaster's B3, `[Remaster] relief = S`): the texture's own
-// BRIGHTNESS read as height - four taps a texel apart, at the bound texture's
-// size (the pack's 4x where there is one) - tilting the normal the lights see.
-// The sets carry no tangents, so the frame is the COTANGENT frame of the
-// surface's screen derivatives (world position and UV). Only the point lights
-// see it (the painted light has no direction), and only on the SET (mode 3):
-// a body's painted cloth and face read as grain. 0, the default, leaves `n`.
-// `dp1`/`dp2`, `du1`/`du2`: the screen derivatives of `w` and `uv`, taken by
-// `main` BEFORE its discards (`gradW`, `gradUV`) - see there.
-vec3 relief(vec3 n, vec3 w, vec2 uv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2) {
-    float s = lg.fx.x;
-    if (s <= 0.0) return n;
-    vec3 p2 = cross(dp2, n), p1 = cross(n, dp1);
-    vec3 T = p2 * du1.x + p1 * du2.x, B = p2 * du1.y + p1 * du2.y;
-    float m = max(dot(T, T), dot(B, B));
-    if (m <= 0.0) return n;
-    float inv = inversesqrt(m);
-    // THE PACK'S NORMAL MAP where there is one (`o3de/normalmap.h`: OpenGL's
-    // convention - R along +u, G along -v, the image's up): its slope, scaled
-    // by the strength, along the frame's T and -B
-    vec4 nm = textureGrad(nmap, uv, du1, du2);
-    if (nm.a > 0.0) {
-        vec3 t = nm.rgb * 2.0 - 1.0;
-        vec2 sl = t.xy / max(t.z, 0.2) * s;
-        return normalize(n + (T * inv) * sl.x - (B * inv) * sl.y);
-    }
-    // (explicit gradients: past the normal map's early return the quad is
-    // not uniform either)
-    vec2 px = 1.0 / vec2(textureSize(tex, 0));
-    const vec3 Y = vec3(0.299, 0.587, 0.114);
-    float hl = dot(textureGrad(tex, uv - vec2(px.x, 0.0), du1, du2).rgb, Y);
-    float hr = dot(textureGrad(tex, uv + vec2(px.x, 0.0), du1, du2).rgb, Y);
-    float hu = dot(textureGrad(tex, uv - vec2(0.0, px.y), du1, du2).rgb, Y);
-    float hd = dot(textureGrad(tex, uv + vec2(0.0, px.y), du1, du2).rgb, Y);
-    vec2 g = vec2(hr - hl, hd - hu) * s;
-    // the slope a texel, x8: a brightness step of 0.1 tilts the normal ~0.8 at 1
-    // (x4 was barely seen at 1 - the median pixel moved 8 of 255)
-    return normalize(n - (T * inv) * g.x * 8.0 - (B * inv) * g.y * 8.0);
-}
-#endif
-
 // THE RAIN'S RIPPLES on a wet floor (`o3de/wetfloor.h`, the remaster's): the
 // floor in cells of 48 units, each with at most one drop - at a hashed place,
 // and kept only where its hash is below the rain's strength, so a light shower
@@ -785,8 +664,7 @@ void main() {
     // THE CUTOUT'S DEPTH, decided AFTER the shader (the cutout pipelines'
     // module, -DOMK_LATE_DEPTH, bound for an opaque cutout draw alone): on
     // Apple's GPUs a module that can `discard` its keyed texels still let some
-    // of them write depth once it grew past a size - the tiled module, the
-    // relief's code - so the cutout's holes hid what lies behind them
+    // of them write depth once it grew past a size, so the cutout's holes hid what lies behind them
     // DIFFERENTLY EACH RUN, the texture atlas's neighbours showing through
     // (Qalisar without MSAA, ~2000 pixels behind the pink sign; found
     // 2026-10-26). Writing the depth makes it the shader's: a discarded
@@ -801,13 +679,11 @@ void main() {
     // THE SCREEN DERIVATIVES the remaster's reads take, here - before the
     // water's and the cutout's DISCARDS (the cull's takes a whole primitive).
     // Past a discard that took a neighbour the quad is no longer whole:
-    // `dFdx` and a `texture()`'s implicit LOD are UNDEFINED there. On the M1 that drew the relief, its normal map and the
+    // `dFdx` and a `texture()`'s implicit LOD are UNDEFINED there. On the M1 that drew the
     // glow's light map differently EACH RUN on a wall whose quads a cutout
-    // edge split (`verify.py: engine: emitter light`'s run-to-run flip, found
-    // 2026-10-25). The reads after the discards take these through
+    // edge split (found 2026-10-25). The reads after the discards take these through
     // `textureGrad`; the colour read above them stays as the original's.
     vec2 gradUV[2] = vec2[2](dFdx(vUV / texels), dFdy(vUV / texels));
-    vec3 gradW[2] = vec3[2](dFdx(vWorld), dFdy(vWorld));
     if (waterMode == 2 && vWorld.y > PC_WSTR) discard;   // below the water (Y is down)
     // Alpha is the KEY, written at upload: 0 on a black texel, 1 elsewhere.
     // Under the nearest sampler (the original's) this is exactly the old
@@ -840,16 +716,9 @@ void main() {
             -64.0, -56.0, -48.0, -32.0, -28.0, -18.0, -13.0, -10.0);
         wave = tbl[wi] / 255.0;
     }
-    // (the remaster's NIGHT, `lg.eye.w`, dims the painted and the start light
-    // under the point lights; 1 - a multiply by one - everywhere else)
-    float night = lg.eye.w;
     vec3 nL = normalize(vNrm);
-#ifdef OMK_TILED
-    if ((pc.lit & 3) == 3) nL = relief(nL, vWorld, vUV / texels, gradW[0], gradW[1], gradUV[0], gradUV[1]);
-#endif
-    vec3 shade = (pc.lit & 3) == 1 ? min(vec3(lg.base) * night + litColour(nL, vWorld, false), vec3(1.0))
-               : (pc.lit & 3) == 2 ? min(vCol * night + litColour(nL, vWorld, false), vec3(1.0))
-               : (pc.lit & 3) == 3 ? min((vCol + vec3(wave)) * night + litColour(nL, vWorld, true), vec3(1.0))
+    vec3 shade = (pc.lit & 3) == 1 ? min(vec3(lg.base) + litColour(nL, vWorld), vec3(1.0))
+               : (pc.lit & 3) == 2 ? min(vCol + litColour(nL, vWorld), vec3(1.0))
                              : vCol + vec3(wave);
 #ifdef OMK_RT
     // a CHARACTER (a caster - the bodies) takes the traced terms; the set
@@ -964,9 +833,7 @@ void main() {
     // looked down into and nearly all at grazing, so `waterStrength` is the
     // GRAZING strength. The plane is level: cos theta is the eye ray's height.
     // A REFLECTING FLOOR (`o3de/floorreflect.h`) is mode 3: the same, its
-    // lookup broken up by the floor's RELIEF where the pack has its normal
-    // map (the tiled module's, as the relief reads it) - the slope shifts it, up to
-    // ~1% of the frame's height. The water's mode 1 is as it was.
+    // lookup broken up by the rain's ripples. The water's mode 1 is as it was.
     // A WET floor (`o3de/wetfloor.h`): the rain's film darkens it, and its
     // reflection, if it has one, is added over the darker ground - all of it
     // times how open to the sky this point is, the corners' answers blended
@@ -998,12 +865,6 @@ void main() {
         // (a floor's reflection is at HALF size, in the image's top-left quarter)
         float k = waterMode == 3 ? 0.5 : 1.0;
         vec2 at = gl_FragCoord.xy * k;
-#ifdef OMK_TILED
-        if (waterMode == 3) {
-            vec4 nm = textureGrad(nmap, vUV / texels, gradUV[0], gradUV[1]);
-            if (nm.a > 0.0) at += (nm.rg * 2.0 - 1.0) * rs.y * 0.012 * k;
-        }
-#endif
         if (waterMode == 3) at += rip.xy * rs.y * 0.02 * k;   // the ripples' slope
         if (waterMode == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
         if (!(waterMode == 3 && rtFloor)) c += texture(refl, at / rs).rgb * PC_WSTR * f * wetHere;

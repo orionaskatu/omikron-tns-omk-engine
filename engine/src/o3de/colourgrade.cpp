@@ -81,7 +81,7 @@ void lutStrip(const float* rgb, int n, std::vector<unsigned char>& out) {
 }
 
 bool CityGrades::open(const std::string& dir) {
-    luts_.clear(); cityOf_.clear(); night_.clear(); opened_ = false;
+    luts_.clear(); cityOf_.clear(); opened_ = false;
     if (!hostfs::isDirectory(dir)) {
         std::fprintf(stderr, "city grades: %s is not a directory - no grade\n", dir.c_str());
         return false;
@@ -104,24 +104,8 @@ bool CityGrades::open(const std::string& dir) {
         if (eq == std::string::npos) continue;
         cityOf_[upperAscii(trim(ln.substr(0, eq)))] = upperAscii(trim(ln.substr(eq + 1)));
     }
-    for (const auto& raw : splitLines(readTextFile(dir + "/night.txt"))) {
-        const std::string ln = trim(raw);
-        if (ln.empty() || ln[0] == '#') continue;
-        const auto eq = ln.find('=');
-        if (eq == std::string::npos) continue;
-        const float d = static_cast<float>(std::atof(trim(ln.substr(eq + 1)).c_str()));
-        if (d > 0.0f && d <= 1.0f) night_[upperAscii(trim(ln.substr(0, eq)))] = d;
-    }
     opened_ = true;
     return true;
-}
-
-float CityGrades::nightOf(const std::string& setName) const {
-    const std::string s = upperAscii(setName);
-    if (const auto it = night_.find(s); it != night_.end()) return it->second;
-    if (const auto c = cityOf_.find(s); c != cityOf_.end())
-        if (const auto it = night_.find(c->second); it != night_.end()) return it->second;
-    return 1.0f;
 }
 
 const ColourLut* CityGrades::forSet(const std::string& setName) const {

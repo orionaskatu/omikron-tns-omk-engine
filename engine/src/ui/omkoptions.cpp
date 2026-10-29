@@ -134,10 +134,7 @@ OmkOptions::OmkOptions(bool remasterBuilt) : remasterBuilt_(remasterBuilt) {
     add(kPageRemaster, choice(kRem, "wet", numbers({0, 0.5, 1}, 0), kTakesWater, true));
     add(kPageRemaster, choice(kRem, "rain3d", numbers({0, 0.5, 1}, 0), kTakesRain3d, true));
     add(kPageRemaster, choice(kRem, "mist", numbers({0, 0.25, 0.5, 1}, 0), kTakesMist, true));
-    add(kPageRemaster, choice(kRem, "relief", numbers({0, 1, 2, 4}, 0), kTakesRelief, true));
     add(kPageRemaster, choice(kRem, "ao", numbers({0, 1, 2, 4}, 0), kTakesAmbientOcclusion, true));
-    add(kPageRemaster, choice(kRem, "bodylight", numbers({0, 0.5, 1}, 0), kTakesBodyTint, true));
-    add(kPageRemaster, choice(kRem, "fxlight", numbers({0, 1, 2, 4}, 0), kTakesEmitterLights, true));
     add(kPageRemaster, choice(kRem, "smooth", numbers({0, 0.5, 0.75, 1}, 0), 0, true));
     add(kPageRemaster, choice(kRem, "upscale", numbers({1, 1.5, 2, 3}, 1), kTakesUpscale, true));
     add(kPageRemaster, choice(kRem, "preload", numbers({0, 15, 25, 50}, 0), 0, true));

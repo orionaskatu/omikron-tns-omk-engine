@@ -323,22 +323,21 @@ int GlesRenderer::preloadStep(int budget) {
 }
 
 // the scene and posing programs' sources through the variants asked for
-void GlesRenderer::remasterSources(bool pointLit, const char*& sceneFragX, const char*& sceneFrag,
+void GlesRenderer::remasterSources(const char*& sceneFragX, const char*& sceneFrag,
                                    const char*& vSceneX, const char*& vScene, const char*& vPosedX,
                                    const char*& vPosed) {
     // the remaster's variants over BOTH program sets, each from its own
     // sources: the plain set is the fallback when the enhanced one does not
     // link, and an enhanced fragment beside a plain vertex stage cannot link
     // (it reads `vNrm` / `vWorld`) - so it must not inherit the enhanced one's
-    const auto fragOf = [&](const char* base, bool points) {
+    const auto fragOf = [&](const char* base) {
         // a relink keeps the bloom variant once built (`bloomBuilt_`), at 0 too
         std::string f = bloom_ > 0.0f || bloomBuilt_ ? bloomVariant(base) : std::string(base);
-        if (points) f = pointLightVariant(f);
         if (waterWant_ > 0.0f) f = waterVariant(f);
         return f;
     };
-    bloomFragX_ = fragOf(kSceneFragX, pointLit);
-    bloomFrag_ = fragOf(kSceneFrag, false);
+    bloomFragX_ = fragOf(kSceneFragX);
+    bloomFrag_ = fragOf(kSceneFrag);
     sceneFragX = bloomFragX_.c_str();
     sceneFrag = bloomFrag_.c_str();
     // the water variant's fragment reads `vWy`: its vertex stages hand it down
@@ -352,18 +351,10 @@ void GlesRenderer::remasterSources(bool pointLit, const char*& sceneFragX, const
         vPosedX = waterPosedVertX_.c_str();
         vPosed = waterPosedVert_.c_str();
     }
-    // the BODY LIGHT over either (only the posing program is a variant: it is
-    // the one that draws the bodies)
-    if (tintWant_) {
-        tintPosedVertX_ = tintVariant(vPosedX);
-        tintPosedVert_ = tintVariant(vPosed);
-        vPosedX = tintPosedVertX_.c_str();
-        vPosed = tintPosedVert_.c_str();
-    }
 }
 
 // ...and their starting uniforms, once linked
-void GlesRenderer::remasterProgramUniforms(bool pointLit) {
+void GlesRenderer::remasterProgramUniforms() {
     if (waterWant_ > 0.0f) {
         // the reflection on unit 4
         for (const GLuint p : {prog_, posed_}) {
@@ -378,27 +369,6 @@ void GlesRenderer::remasterProgramUniforms(bool pointLit) {
         }
         glUseProgram(0);
         std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
-    }
-    if (pointLit) {
-        // the night at 1 until a frame says otherwise: a uniform starts at 0
-        for (const GLuint p : {prog_, posed_}) {
-            if (!p) continue;
-            glUseProgram(p);
-            glUniform1f(glGetUniformLocation(p, "uSetDim"), 1.0f);
-        }
-        glUseProgram(0);
-    }
-    if (tintWant_) {
-        // 1, 1, 1 until a draw says otherwise: a uniform starts at 0, and the
-        // pose self-test's bodies drawn BLACK read as never posed (all of
-        // them went the CPU way, 2026-10-20)
-        if (posed_) {
-            glUseProgram(posed_);
-            glUniform3f(glGetUniformLocation(posed_, "uLightTint"), 1.0f, 1.0f, 1.0f);
-            glUseProgram(0);
-        }
-        std::printf("gles: the body light - the posing program's variant (%s)\n",
-                    posed_ ? "built" : "not built - the bodies tinted on the CPU");
     }
     bloomBuilt_ = bloomBuilt_ || bloom_ > 0.0f;   // the variant `remasterSources` linked
     if (bloomBuilt_) {

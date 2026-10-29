@@ -8,7 +8,6 @@
 #include "../sdl/playstate.h"
 
 #include "o3de/colourgrade.h"
-#include "o3de/emitterlight.h"
 #include "o3de/texpack.h"
 #include "platform/events.h"
 #include "platform/filmpack.h"
@@ -60,15 +59,12 @@ void PlayState::remasterSetup() {
             for (const char* sub : {"/pack", "/full/pack"})
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
-            std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
-                        "fx light %s, relief %s, ao %s, floors %s, wet %s, rain3d %s, mist %s, smooth %s (a specific flag or key beats each)\n", preset.c_str(),
+            std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, "
+                        "ao %s, floors %s, wet %s, rain3d %s, mist %s, smooth %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : pvText("bloom").c_str(),
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
                         waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : pvText("water").c_str(),
-                        bodyLightFlag >= 0.0f || settings.bodyLightSource == omk::Settings::Source::Ini ? "as set" : pvText("bodylight").c_str(),
-                        fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : pvText("fxlight").c_str(),
-                        reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : pvText("relief").c_str(),
                         aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : pvText("ao").c_str(),
                         floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : pvText("floors").c_str(),
                         wetFlag >= 0.0f || settings.wetSource == omk::Settings::Source::Ini ? "as set" : pvText("wet").c_str(),
@@ -136,8 +132,7 @@ void PlayState::remasterSetup() {
         bloomStrength = bloomFlag >= 0.0f ? bloomFlag
                       : settings.bloomSource == omk::Settings::Source::Ini ? settings.bloom
                       : !preset.empty() ? pv("bloom") : 0.0f;
-        // the light maps decoded with the colours only for the bloom (the
-        // surface lights read them on their own)
+        // the light maps decoded with the colours only for the bloom
         omk::texturePack().setLights(bloomStrength > 0.0f);
         if (bloomStrength > 0.0f)
             std::printf("bloom: %.2f - a REMASTER feature: a glow from the texture pack's light maps "
@@ -227,20 +222,6 @@ void PlayState::remasterSetup() {
         if (waterStrength > 0.0f)
             std::printf("water: %.2f - a REMASTER feature: the water reflects the scene, drawn by "
                         "Vulkan, Direct3D 12 and GLES\n", static_cast<double>(waterStrength));
-        // the BODY LIGHT (`o3de/lightprobe.h`): its flag, its key, the preset's 1 (the reader's, 2026-10-20)
-        bodyLight = bodyLightFlag >= 0.0f ? bodyLightFlag
-                  : settings.bodyLightSource == omk::Settings::Source::Ini ? settings.bodyLight
-                  : !preset.empty() ? pv("bodylight") : 0.0f;
-        // the EMITTERS' LIGHT (`o3de/emitterlight.h`): its flag, its key, the preset's 1
-        fxLight = fxLightFlag >= 0.0f ? fxLightFlag
-                : settings.fxLightSource == omk::Settings::Source::Ini ? settings.fxLight
-                : !preset.empty() ? pv("fxlight") : 0.0f;
-        // the RELIEF (`View::relief`): its flag, its key, the preset's 2 (the
-        // reader's, 2026-10-21: 1 on the brightness beside 0, 2 and 4; 2 once
-        // the pack's generated normal maps came, "relief 2 is better")
-        relief = reliefFlag >= 0.0f ? reliefFlag
-               : settings.reliefSource == omk::Settings::Source::Ini ? settings.relief
-               : !preset.empty() ? pv("relief") : 0.0f;
         // the ROUNDED BODIES (`o3de/smoothbody.h`): its flag, its key, the
         // preset's 0.75 (the reader's "do it by default", 2026-10-22 - every
         // character not yet seen, so --smooth-skip stays the way out)
@@ -279,27 +260,11 @@ void PlayState::remasterSetup() {
         if (aoStrength > 0.0f)
             std::printf("ao: %.2f - a REMASTER feature: ambient occlusion at contacts, from the frame's depth, "
                         "drawn by Vulkan only\n", static_cast<double>(aoStrength));
-        if (relief > 0.0f) {
-            // ...from the pack's NORMAL MAPS where it has them (B3, `<key>_n.png`),
-            // the brightness elsewhere
-            omk::texturePack().setNormals(true);
-            std::printf("relief: %.2f - a REMASTER feature: the textures' relief under the emitters' lights, "
-                        "%zu normal maps in the pack (the brightness elsewhere), drawn by Vulkan and Direct3D 12\n",
-                        static_cast<double>(relief), omk::texturePack().normalMaps());
-        }
-        if (fxLight > 0.0f)
-            std::printf("fx light: %.2f - a REMASTER feature: the set's flames and glows light the bodies "
-                        "near them, drawn by Vulkan, Direct3D 12 and GLES\n", static_cast<double>(fxLight));
-        if (bodyLight > 0.0f)
-            std::printf("body light: %.2f - a REMASTER feature: the bodies take the set's painted light "
-                        "around them, drawn by Vulkan and GLES only\n", static_cast<double>(bodyLight));
         const std::string gradeDir = !gradeFlag.empty() ? gradeFlag
                                    : !settings.grade.empty() ? settings.grade : presetGrades;
         if (!gradeDir.empty() && omk::cityGrades().open(gradeDir))
             std::printf("grade: %s - %zu city grades, a REMASTER feature, drawn by Vulkan and GLES only; "
                         "off while the greyscale bank is on\n", gradeDir.c_str(), omk::cityGrades().size());
-        // ...and beside them the CURATED LIGHT SOURCES (`o3de/emitterlight.h`
-        // SurfaceCuration): which textures, which parts of them, cast light
         // ...and the FLOORS that reflect (`floors.txt`, the same folder): no
         // list, no floors
         if (floorStrength > 0.0f) {
@@ -312,20 +277,12 @@ void PlayState::remasterSetup() {
                 floorStrength = 0.0f;
             }
         }
-        if (fxLight > 0.0f && !gradeDir.empty() && omk::surfaceCuration().open(gradeDir + "/lights.txt"))
-        {
-            std::printf("fx light: %s/lights.txt - %zu curated light sources\n", gradeDir.c_str(),
-                        omk::surfaceCuration().size());
-            // ...which BLOOM too, where the light maps have nothing for them
-            if (bloomStrength > 0.0f) omk::texturePack().setLightHook(&omk::curateBloom, &omk::bloomCurated);
-        }
     }
     // each strength as the start set it - what OMK's options menu may move live
     // (`remasterApplyLive`) and the switch brings back: only one ON here had
     // its resources loaded
     remasterAtStart_ = {{"bloom", bloomStrength}, {"water", waterStrength}, {"floors", floorStrength},
-                        {"wet", wetStrength}, {"rain3d", rain3dStrength}, {"mist", mistStrength}, {"relief", relief}, {"ao", aoStrength},
-                        {"bodylight", bodyLight}, {"fxlight", fxLight}};
+                        {"wet", wetStrength}, {"rain3d", rain3dStrength}, {"mist", mistStrength}, {"ao", aoStrength}};
 }
 
 #endif  // OMK_REMASTER

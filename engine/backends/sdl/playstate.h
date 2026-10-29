@@ -127,9 +127,6 @@ struct PlayState {
     float & mistFlag = opt.mistFlag;
     float & upscaleFlag = opt.upscaleFlag;
     float & preloadFlag = opt.preloadFlag;
-    float & bodyLightFlag = opt.bodyLightFlag;
-    float & fxLightFlag = opt.fxLightFlag;
-    float & reliefFlag = opt.reliefFlag;
     float & smoothFlag = opt.smoothFlag;
     std::string & smoothSkipFlag = opt.smoothSkipFlag;
     float & aoFlag = opt.aoFlag;
@@ -437,7 +434,6 @@ struct PlayState {
         int   lightCount{};
         bool  lightsBlack{};
         float lightBase{};
-        float lightTint[3]{1.0f, 1.0f, 1.0f};   // the body light's (`o3de/lightprobe.h`)
         long posedFrame{};
         std::vector<omk::CollisionSphere> spheres{};   // the crowd push tests these
         float reach{};   // his model's +88
@@ -780,9 +776,6 @@ struct PlayState {
     int splashTexSlot = -1;                      // ...their crown texture's pool slot, -1 none
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
-    float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
-    float fxLight{};         // the emitters' light's (`o3de/emitterlight.h`), 0 off
-    float relief{};          // the relief's (`View::relief`), 0 off
     float smoothBodies{};    // the rounded bodies' pull (`o3de/smoothbody.h`), 0 off
     std::set<std::string> smoothSkip;   // ...and the models left as they are (upper case)
     // whether `model` is rounded: the option on and the name not skipped
@@ -814,8 +807,6 @@ struct PlayState {
     } shadow{};
     float pedFootOffMax{};
     bool lightsTold{};
-    bool fxLightsTold{};   // the first frame an emitter's light reached the player said
-    float nightWas = 1.0f; // the night (`View::setDim`) last said
     float shimmerClock{};   // `dword_907310`, wrapped at 256
     std::vector<omk::DecorSoup> worldDecors{};   // every LOADED slot's soup, for decorUnder
     std::uint64_t worldGeoRev{};
@@ -875,8 +866,6 @@ struct PlayState {
     float remasterOtherFeet_ = 0.0f;
     bool remasterShow(bool on, const char* why);   // false when nothing was armed
     void remasterModeFrame(bool f10);              // each frame, beside ESC's read: F10 down
-    void remasterSlotsFrame(bool all);             // the sets' lights brought to the mode
-    void remasterSlotLights(WorldSlot& ws, bool emitters);
     bool remasterSwitchable() const;
     float remasterArmed(const char* key) const;    // the start's strength, its resources loaded when > 0
     float remasterRunning(const char* key, float v) const;   // ...what the remaster mode runs with
@@ -894,7 +883,6 @@ struct PlayState {
     bool remasterTakePreload(int slot, const std::string& stem, int area, long frame);
     void remasterFinish();                         // the preload's jobs stopped and waited for
     void remasterSceneViewer();                    // the scene viewer's texture pack
-    void remasterEmitterLights(WorldSlot& ws);     // a set's table: its lights, glows, flames
     void remasterGrade();                          // the city grade for the set underfoot
     void remasterAliasGrey(const omk::Texture& colour, const omk::Texture& grey);
     void remasterConfigure(omk::Renderer& r);      // a GPU renderer's remaster requests
@@ -902,12 +890,6 @@ struct PlayState {
     // the intro film's upscaled copy, opened into `mov` (smoothed) - false: none
     bool remasterOpenFilm(const std::string& real, omk::Movie& mov, const char* name);
     void remasterViewMist(omk::View& v);
-    int  remasterViewLights(omk::View& v, bool& fxPix, float& kFxView);
-    void remasterPointLights(omk::View& v, std::vector<std::pair<float, const omk::Light3do*>>& fx,
-                             float kFxView, int kFxSlots, float& fxCut);
-    void remasterLightsTold(const omk::View& v, const std::vector<std::pair<float, const omk::Light3do*>>& near,
-                            const float at[3]);
-    void remasterLitSet(std::vector<omk::Draw>& list);
     // THE RAIN IN 3D (`playremaster_rain.cpp`): the weather hands its stepped
     // drops over (-> true: the remaster draws them, the 2D streaks are not), and
     // the next frame's draw list takes them as strips in the scene
@@ -918,7 +900,6 @@ struct PlayState {
     void remasterSnowCover(std::vector<omk::Draw>& list);      // the snow lying (`o3de/wetfloor.h` coverRuns)
     void remasterWetBodies(std::vector<omk::Draw>& list);      // the bodies wet in the rain (`o3de/wetfloor.h`)
     bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn);
-    bool fxTiled{};   // this frame's emitters' lights go to `View::points` (`remasterViewLights`)
     // the pinned list: every prepared preload's textures
     void preloadPin();
     std::string slotAsked[2]{};
@@ -1310,16 +1291,6 @@ struct PlayState {
                           std::size_t& hiddenMeshes, std::size_t& hiddenDrawn,
                           std::size_t& movingCulled, std::size_t& movingDrawn);   // from `worldDrawLists`
     void worldDrawClassicShadows();   // from `worldDrawLists`
-    // THE BODY LIGHT's tint for a body at `p` (`o3de/lightprobe.h`): the
-    // shown slot's painted light, 1, 1, 1 when off or not drawn
-    void bodyTint(const float p[3], float out[3]) const;
-    // ...and under PER-PIXEL lighting (`--lighting`, `--enhance-all`), where
-    // the shader lights a body from the scene's grey and ignores its corner
-    // colours (`Draw::lit` 1): a tinted body is drawn in mode 2 instead - the
-    // lights added to its corner colour - with that colour the grey x tint
-    bool bodyTintPerPixel() const {
-        return lighting > 0 && bodyLight > 0.0f && world_ && world_->drawsBodyTint();
-    }
     void worldDrawParticles(bool scriptSprites, float fxNear, float fxFar, int& spriteSlotBase);   // from `worldDrawLists`
     void worldDrawSky();   // from `worldDrawLists`
     void worldDrawShadowLight(bool castShadows);   // from `worldDrawLists`

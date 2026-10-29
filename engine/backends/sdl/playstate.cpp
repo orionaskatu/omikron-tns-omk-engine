@@ -2159,7 +2159,6 @@ void PlayState::prepareSet(SetLoad& L) {
     w.mirror = omk::mirrorPlane(d);
     if (const auto mh = omk::readHeader(d)) {
         w.lights = omk::readLights(d, *mh);
-        w.setLights = w.lights.size();
         w.ambientGrey = static_cast<int>(static_cast<std::int64_t>(
             static_cast<double>(mh->ambient) * 255.0));
         w.meshes = omk::readMeshes(d, *mh);

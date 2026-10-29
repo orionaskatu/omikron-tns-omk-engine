@@ -203,8 +203,6 @@ void PlayState::worldCrowdPedestrians() {
                         p.lightCount = reachN;
                         p.lightsBlack = lit;
                         p.lightBase = crowdBase;
-                        const float at[3] = {w.body[0], w.body[1], w.body[2]};
-                        bodyTint(at, p.lightTint);   // the remaster's body light, 1 when off
                     }
                 }
                 if (!p.gpu) { OMK_MEM_TAG("crowd: posed slots"); omk::applyPose(p.posed, rest, p.mo->meshes, pose); }
@@ -312,14 +310,6 @@ void PlayState::worldCrowdPedestrians() {
                 // carries the decision to the shader.
                 const double pedLight0 = phaseNow();
                 if (p.gpu) j.lit += p.lightCount;
-                if (!p.gpu && !(lightCrowd && lighting == 0) && bodyTintPerPixel()) {
-                    // the body light under per-pixel lighting: the grey x tint
-                    // as the corner colour, which `Draw::lit` 2 starts from
-                    const float at[3] = {w.body[0], w.body[1], w.body[2]};
-                    float tn[3];
-                    bodyTint(at, tn);
-                    for (auto& c : p.posed.corners) { c.r = crowdBase * tn[0]; c.g = crowdBase * tn[1]; c.b = crowdBase * tn[2]; }
-                }
                 if (!p.gpu && lightCrowd && lighting == 0) {
                     // THE BASE IS THE SET'S AMBIENT GREY, and that is the
                     // part that had to be read rather than assumed - twice.
@@ -337,9 +327,7 @@ void PlayState::worldCrowdPedestrians() {
                     // lights ARE their lighting, and adding to white
                     // changes exactly zero pixels.
                     const float at[3] = {w.body[0], w.body[1], w.body[2]};
-                    float tn[3];
-                    bodyTint(at, tn);   // the remaster's body light, 1 when off
-                    for (auto& c : p.posed.corners) { c.r = crowdBase * tn[0]; c.g = crowdBase * tn[1]; c.b = crowdBase * tn[2]; }
+                    for (auto& c : p.posed.corners) { c.r = crowdBase; c.g = crowdBase; c.b = crowdBase; }
                     for (const WorldSlot& ws2 : worldSlots)
                         if (!ws2.lights.empty())
                             j.lit += omk::applyLights(p.posed, 0, p.posed.corners.size(),
@@ -718,7 +706,6 @@ void PlayState::worldCrowdPlayer() {
             }
             if (playerGpu) { playerBody.lightCount = reachN; playerBody.lightsBlack = true; }
         }
-        bodyTint(playerLitAt, playerBody.lightTint);   // the remaster's body light, 1 when off
         // ROTATE ABOUT THE PELVIS, not the model's origin. A `.3DO`'s
         // meshes carry ABSOLUTE positions and the body is not built
         // around (0,0,0): `HO1_FN`'s root `UBassin` sits at
@@ -813,17 +800,11 @@ void PlayState::worldCrowdPlayer() {
         }
         playerMeshAtKnown = true;
         lastRootDrop = rootDrop;
-        if (!playerLit && !playerGpu && bodyTintPerPixel())   // the body light per pixel: grey x tint
-            for (auto& c : playerBody.posed.corners) {
-                c.r = playerBody.lightBase * playerBody.lightTint[0];
-                c.g = playerBody.lightBase * playerBody.lightTint[1];
-                c.b = playerBody.lightBase * playerBody.lightTint[2];
-            }
         if (playerLit && !playerGpu) {
             for (auto& c : playerBody.posed.corners) {
-                c.r = playerBody.lightBase * playerBody.lightTint[0];
-                c.g = playerBody.lightBase * playerBody.lightTint[1];
-                c.b = playerBody.lightBase * playerBody.lightTint[2];
+                c.r = playerBody.lightBase;
+                c.g = playerBody.lightBase;
+                c.b = playerBody.lightBase;
             }
             for (const WorldSlot& ws2 : worldSlots)
                 if (!ws2.lights.empty())

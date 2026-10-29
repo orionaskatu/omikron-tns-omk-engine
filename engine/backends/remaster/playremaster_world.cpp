@@ -8,7 +8,6 @@
 #include "../sdl/playstate.h"
 
 #include "o3de/colourgrade.h"
-#include "o3de/emitterlight.h"
 #include "o3de/floorreflect.h"
 #include "o3de/wetfloor.h"
 #include "o3de/texpack.h"
@@ -23,7 +22,7 @@
 #include <cstring>
 #include <vector>
 
-// a set's water and ground, its floors, probes and glowing surfaces - on the
+// a set's water and ground and its floors - on the
 // thread `prepareSet` runs on, after the set's own lights are read
 void PlayState::remasterPrepareSet(SetLoad& L) {
     WorldSlot& w = L.out;
@@ -38,7 +37,7 @@ void PlayState::remasterPrepareSet(SetLoad& L) {
     w.water = omk::waterPlane(w.geo);
     w.ground = omk::groundLevel(w.geo);
     // what the START armed, not what runs: a set loaded in the original mode
-    // (part B's switch) has its floors, probes and glows for the remaster's
+    // (part B's switch) has its floors for the remaster's
     w.floors = remasterArmed("floors") > 0.0f ? omk::floorPlanes(w.geo, w.tex, omk::floorList(), L.stem)
                                               : omk::FloorPlanes{};
     // ...and its floors under the OPEN SKY, for the rain to wet
@@ -66,44 +65,6 @@ void PlayState::remasterPrepareSet(SetLoad& L) {
     } else {
         w.wet = omk::WetFloors{};
     }
-    if (remasterArmed("bodylight") > 0.0f) {
-        w.probes.build(w.geo);
-        omk::event("world.probes", {{"set", L.stem}, {"mean", static_cast<double>(w.probes.meanLuma())}});
-    } else {
-        w.probes = omk::LightProbes{};
-    }
-    // THE GLOWING SURFACES' LIGHT (`o3de/emitterlight.h` surfaceLights,
-    // the remaster's): the pack's light maps over the set's triangles - its
-    // neon letters, its lit windows - after the set's own lights
-    w.fxSurface.clear();
-    w.fxIn = false;
-    const float fxArmed = remasterArmed("fxlight");
-    if (fxArmed > 0.0f && world_ && world_->drawsEmitterLights() && omk::texturePack().active() &&
-        omk::texturePack().lightMaps() > 0) {
-        std::vector<const omk::Texture*> ptrs;
-        for (const auto& wt : w.tex) ptrs.push_back(&wt);
-        // the LIGHT MAPS alone: the colours are the shipped palette's
-        const auto packs = omk::texturePack().replacements(ptrs, false);
-        int cells = 0;
-        w.fxSurface = omk::surfaceLights(w.geo, w.tex, packs, fxArmed, &cells, L.stem, &omk::surfaceCuration());
-        // in the table while the remaster shows (`remasterSlotLights` keeps it so)
-        if (fxLight > 0.0f) {
-            w.lights.insert(w.lights.end(), w.fxSurface.begin(), w.fxSurface.end());
-            w.fxIn = true;
-        }
-        std::printf("fx light: %s - %d glowing surfaces light the bodies and the set (%s)\n", L.stem.c_str(), cells,
-                    omk::surfaceCuration().covers(L.stem) ? "the curated list" : "the automatic rules");
-        omk::event("world.fxsurfaces", {{"set", L.stem}, {"lights", cells},
-                                        {"curated", omk::surfaceCuration().covers(L.stem)}});
-    }
-}
-
-// THE EMITTERS' LIGHT (`o3de/emitterlight.h`): the set's table rebuilt as its
-// own lights, its glowing surfaces and a point light a glowing emitter, so
-// every path that lights a body takes them - when the scene binds its emitters
-// (`remasterSlotLights`, `playremaster_mode.cpp`: the switch rebuilds it too)
-void PlayState::remasterEmitterLights(WorldSlot& ws) {
-    if (fxLight > 0.0f && world_ && world_->drawsEmitterLights()) remasterSlotLights(ws, true);
 }
 
 // THE CITY GRADE (`o3de/colourgrade.h`): chosen for the set under the
@@ -208,15 +169,6 @@ void PlayState::remasterSceneViewer() {
 
 // a GPU renderer's remaster requests (GLES; Vulkan, desktop only, asks its own)
 void PlayState::remasterConfigure(omk::Renderer& r) {
-    // the pack's NORMAL MAPS only for a renderer that draws the relief: GLES
-    // has none, and a set's load decoded and parked them for nothing - the
-    // ports' memory (`remasterSetup` asked them for the relief at start)
-    if (relief > 0.0f && !r.drawsRelief()) {
-        omk::texturePack().setNormals(false);
-        std::printf("relief: not drawn by this renderer - the pack's normal maps are not decoded\n");
-    }
-    if (relief > 0.0f)
-        omk::event("texpack.normals", {{"on", omk::texturePack().normals()}, {"relief", r.drawsRelief()}});
     // a renderer with the grade but not the remaster's own post pass (Direct3D 12: the shared chain takes
     // the LUT first) is told one is coming - the city's, or the shower's overcast - so it keeps the chain
     if ((r.takes() & omk::kTakesGrade) && !(r.takes() & omk::kTakesBloom) &&
@@ -249,8 +201,6 @@ void PlayState::remasterConfigure(omk::Renderer& r) {
     const float mistWant = mistStrength > 0.0f || rain3dStrength > 0.0f ? 1.0f : 0.0f;
     if (std::max({waterStrength, floorStrength, wetStrength, mistWant}) > 0.0f)
         r.setWater(std::max({waterStrength, floorStrength, wetStrength, mistWant}));
-    if (bodyLight > 0.0f) r.setBodyTint(true);
-    if (fxLight > 0.0f) r.setEmitterLights(true);
 }
 
 // THE FILM PACK (`platform/filmpack.h`): the same film upscaled, the same
@@ -267,11 +217,10 @@ bool PlayState::remasterOpenFilm(const std::string& real, omk::Movie& mov, const
 
 // A STRENGTH MOVED BY OMK'S OPTIONS MENU (`todo/graphics-menu.md` 3a), on the
 // running game. The rule: a strength that was ON AT START moves at once, 0
-// included - its resources were loaded (the light maps, the normal maps, the
-// floors' list, the probes) and its pass exists; one that was 0 waits for the
+// included - its resources were loaded (the light maps, the
+// floors' list) and its pass exists; one that was 0 waits for the
 // next start, which loads them. The mist needs nothing loaded and moves
-// always, and the preload radius too (its phase loads what it needs). The emitters' light waits too: its strength is baked into each
-// set's surface lights when the set loads (`remasterPrepareSet`).
+// always, and the preload radius too (its phase loads what it needs).
 bool PlayState::remasterApplyLive(const std::string& key, float v) {
     if (remasterAtStart_.empty()) return false;   // the remaster did not run
     // THE MODE (part B, `playremaster_mode.cpp`): the switch itself
@@ -303,8 +252,6 @@ bool PlayState::remasterApplyLive(const std::string& key, float v) {
     if (key == "floors")    { floorStrength = v; return true; }
     if (key == "wet")       { wetStrength = v; return true; }
     if (key == "rain3d")    { rain3dStrength = v; return true; }
-    if (key == "relief")    { relief = v; return true; }
-    if (key == "bodylight") { bodyLight = v; return true; }
     if (key == "ao") {
         if (!world_ || !world_->setAmbientOcclusion(v)) return false;
         aoStrength = v;

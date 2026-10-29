@@ -150,8 +150,8 @@ VK_CFLAGS :=
 VK_LIBS :=
 GLSLC :=
 endif
-VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc build/shaders/scene_tiled.frag.inc \
-              build/shaders/scene_cut.frag.inc build/shaders/scene_tiled_cut.frag.inc \
+VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
+              build/shaders/scene_cut.frag.inc \
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc build/shaders/depthcopy.frag.inc \
               build/shaders/shadow.vert.inc \
               build/shaders/present.frag.inc build/shaders/overlay.frag.inc               build/shaders/bloom.frag.inc build/shaders/post.frag.inc build/shaders/post_ms.frag.inc               build/shaders/blit_hdr.frag.inc \
@@ -171,20 +171,11 @@ build/shaders/%.inc: backends/vulkan/shaders/%
 # the remaster's upscale (A6): AMD FSR 1, vendored, included by both
 build/shaders/present.frag.inc build/shaders/easu.frag.inc: third_party/ffx_a.h third_party/ffx_fsr1.h
 
-# the scene's fragment shader again, with the remaster's TILED point lights
-# (`o3de/lighttiles.h`) - its own module, bound only when the tiles are on
-build/shaders/scene_tiled.frag.inc: backends/vulkan/shaders/scene.frag
-	@mkdir -p build/shaders
-	$(GLSLC) -mfmt=c -DOMK_TILED -fshader-stage=frag -o $@ $<
-
-# ...and both again with the CUTOUT's late depth (`scene.frag` OMK_LATE_DEPTH):
+# the scene's fragment shader again with the CUTOUT's late depth (`scene.frag` OMK_LATE_DEPTH):
 # the opaque cutout draws' pipelines alone
 build/shaders/scene_cut.frag.inc: backends/vulkan/shaders/scene.frag
 	@mkdir -p build/shaders
 	$(GLSLC) -mfmt=c -DOMK_LATE_DEPTH -fshader-stage=frag -o $@ $<
-build/shaders/scene_tiled_cut.frag.inc: backends/vulkan/shaders/scene.frag
-	@mkdir -p build/shaders
-	$(GLSLC) -mfmt=c -DOMK_TILED -DOMK_LATE_DEPTH -fshader-stage=frag -o $@ $<
 
 # the ambient occlusion's again, for a MULTISAMPLED depth (`--aa`)
 build/shaders/ao_ms.frag.inc: backends/vulkan/shaders/ao.frag

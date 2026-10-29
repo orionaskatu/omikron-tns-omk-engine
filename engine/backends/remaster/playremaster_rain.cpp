@@ -32,9 +32,7 @@
 // the original's 12 units drew every drop alike.
 //
 // ...and LIT (the reader's "option 3", 2026-10-27): each drop takes the light
-// of the set's own lights that reach it - and the emitters' (the flames, the
-// glows) when the remaster's emitters' light put them in the slot's table -
-// on the engine's own rule (`o3de/vertexlight.h` `lightReach`: the squared
+// of the set's own lights that reach it, on the engine's own rule (`o3de/vertexlight.h` `lightReach`: the squared
 // reach, the linear falloff, `intensity * 256`), as a surface facing each
 // light would (a streak has none), its colour through the engine's ramp
 // `(t * c) >> 8`: rain glints orange by the burner and in a lamp's pool, and
@@ -98,7 +96,6 @@ constexpr float kRainHalfPx = 1.5f;       // ...its half width in pixels at 480 
 constexpr int kStreakW = 8, kStreakH = 32;   // the streak texture, across and along
 constexpr float kStreakEnds = 0.25f;      // ...soft over this much of its length at each end
 constexpr float kRainUnlit = 0.35f;       // a drop no light reaches, against the line's grey
-constexpr float kRainNeon = 2.0f;         // ...and the emitters' (the neon), four times the set's lights
 constexpr float kRainLit = 0.5f;          // ...and the lights' colour added on it - Anekbah's
                                           // street has two fills reaching everywhere, ~0.8 together
 
@@ -310,16 +307,14 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     const omk::TriangleSoup* shot = nullptr;
     const omk::SoupRunBoxes* boxes = nullptr;
     std::span<const omk::Light3do> lights;
-    std::size_t setLightCount = 0;   // ...the set's own first, then the emitters' (the neon, the flames)
     for (const auto& ws : worldSlots)
         if (!ws.stem.empty() && ws.stem == worldSet) {
             shot = &ws.shotSoup;
             boxes = &ws.shotRunBoxes;
             lights = ws.lights;
-            setLightCount = std::min(ws.setLights, ws.lights.size());
         }
     static std::vector<float> reach;
-    int litDrops = 0, neonDrops = 0;   // ...lit, and lit by an emitter (the neon) past a glint
+    int litDrops = 0;   // ...lit by the set's lights
     const bool snow = (rainBits & 2u) == 0 && (rainBits & 4u) != 0;   // the snow's arm: bit 4 alone
     const bool sand = (rainBits & 6u) == 0;                            // the restored sand: bit 8
     if (sand && (sandTexSlot < 0 || sandGrains3d.empty())) return;
@@ -358,34 +353,22 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         return c;
     };
     // the light at `p`: `base` grey, and the set's own lights that reach it
-    // added - each as `ramp[c][t]` with `t` its whole strength - then the
-    // EMITTERS' - the neon, the glowing surfaces, the flames, in the slot's
-    // table when the remaster's emitters' light put them there - weighed
-    // `kRainNeon` and taking the grey base's place as they grow: a drop by a
-    // pink sign glows pink (the reader's "rain effect on neon", 2026-10-27).
-    // Whether the set's lights reached it, and the emitters' luminance
+    // added - each as `ramp[c][t]` with `t` its whole strength. Whether they reached it
     const auto lightAt = [&](const float p[3], float base, float rgb[3]) {
         bool lit = false;
-        float neon[3] = {0.0f, 0.0f, 0.0f};
         for (int c = 0; c < 3; ++c) rgb[c] = base;
-        for (int part = 0; part < 2; ++part) {
-            const std::span<const omk::Light3do> ls = part == 0 ? lights.first(setLightCount)
-                                                                : lights.subspan(setLightCount);
-            reach.clear();
-            if (ls.empty() || omk::lightReach(p, ls, reach) == 0) continue;
-            if (part == 0) lit = true;
-            for (std::size_t i = 0; i + 7 < reach.size(); i += 8) {
-                const float k = std::sqrt(reach[i] * reach[i] + reach[i + 1] * reach[i + 1] + reach[i + 2] * reach[i + 2]);
-                const int t = static_cast<int>(std::min(255.0f, k));
-                for (int c = 0; c < 3; ++c) {
-                    const float add = omk::lightRamp(static_cast<std::uint8_t>(reach[i + 4 + c]), t) / 255.0f;
-                    (part == 0 ? rgb[c] : neon[c]) += (part == 0 ? kRainLit : kRainNeon) * add;
-                }
+        reach.clear();
+        if (lights.empty() || omk::lightReach(p, lights, reach) == 0) return lit;
+        lit = true;
+        for (std::size_t i = 0; i + 7 < reach.size(); i += 8) {
+            const float k = std::sqrt(reach[i] * reach[i] + reach[i + 1] * reach[i + 1] + reach[i + 2] * reach[i + 2]);
+            const int t = static_cast<int>(std::min(255.0f, k));
+            for (int c = 0; c < 3; ++c) {
+                const float add = omk::lightRamp(static_cast<std::uint8_t>(reach[i + 4 + c]), t) / 255.0f;
+                rgb[c] += kRainLit * add;
             }
         }
-        const float neonL = std::min(1.0f, 0.299f * neon[0] + 0.587f * neon[1] + 0.114f * neon[2]);
-        for (int c = 0; c < 3; ++c) rgb[c] = rgb[c] * (1.0f - 0.7f * neonL) + neon[c];
-        return std::pair<bool, float>{lit, neonL};
+        return lit;
     };
     for (const auto& d : all) {
         if (shot && boxes) {
@@ -527,12 +510,9 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         // nothing lights it, and the lights that reach the drop added; the
         // streak's texture shaping it all
         float rgb[3];
-        const auto [lit, neonL] = lightAt(lead, 192.0f / 255.0f * kRainUnlit, rgb);
-        if (lit) ++litDrops;
-        if (neonL > 0.05f) ++neonDrops;
+        if (lightAt(lead, 192.0f / 255.0f * kRainUnlit, rgb)) ++litDrops;
         // past white, scaled down whole rather than clipped per channel: the
-        // burner's drops stay orange instead of going white - and a drop in a
-        // neon's light catches it, brighter (up to 1.8x)
+        // burner's drops stay orange instead of going white
         const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
         // ...and each drop its own brightness, `kRainOwnMin`..1, kept as it falls (a
         // drop is its index): rain is many faint drops and a few catching
@@ -540,7 +520,7 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         std::uint32_t hv = static_cast<std::uint32_t>(&d - all.data()) * 0x9E3779B1u;
         hv ^= hv >> 15;
         const float own = kRainOwnMin + (1.0f - kRainOwnMin) * static_cast<float>(hv & 0xFFu) / 255.0f;
-        for (float& c : rgb) c = std::min(1.0f, c / top * s * fade * own * (1.0f + 0.8f * neonL));
+        for (float& c : rgb) c = std::min(1.0f, c / top * s * fade * own);
         const float W = static_cast<float>(kStreakW), H = static_cast<float>(kStreakH);
         const float l0[3] = {lead[0] - side[0] * w, lead[1] - side[1] * w, lead[2] - side[2] * w};
         const float l1[3] = {lead[0] + side[0] * w, lead[1] + side[1] * w, lead[2] + side[2] * w};
@@ -634,7 +614,7 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         omk::event("remaster.rain3d", {{"frame", frameNo}, {"drops", static_cast<long>(rainDrops.size())},
                                        {"drawn", static_cast<long>(drawnDrops)}, {"roofed", roofed},
                                        {"streak", (snow ? snowTexSlot : rainTexSlot) >= 0}, {"lit", litDrops},
-                                       {"snow", snow}, {"sand", sand}, {"neon", neonDrops},
+                                       {"snow", snow}, {"sand", sand},
                                        {"splashes", static_cast<long>(drawnSplashes)},
                                        {"splashRoofed", splashRoofed}});
     }

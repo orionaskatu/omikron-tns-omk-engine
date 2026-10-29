@@ -198,7 +198,6 @@ public:
 
     void clear() { emitters_.clear(); particles_.clear(); }
     std::size_t emitterCount() const { return emitters_.size(); }
-    const std::vector<Emitter>& emitters() const { return emitters_; }
     std::size_t count() const { return particles_.size(); }
     const std::vector<Particle>& particles() const { return particles_; }
 

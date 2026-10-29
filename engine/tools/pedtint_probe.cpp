@@ -94,9 +94,11 @@ int main(int argc, char** argv) {
     }
     const std::string root = argv[1];
     bool broken = false, where = false;
+    std::string sheetPath;
     for (int i = 2; i < argc; ++i) {
         broken |= std::strcmp(argv[i], "--break") == 0;
         where |= std::strcmp(argv[i], "--where") == 0;
+        if (std::strcmp(argv[i], "--sheet") == 0 && i + 1 < argc) sheetPath = argv[++i];
     }
     const omk::DataFs fs(root);
 
@@ -118,6 +120,47 @@ int main(int argc, char** argv) {
         for (const std::string& name : omk::pedModelTable(sex)) addModel(name);
     addModel("moto");   // the motos wear the same word (a bike and its rider)
     if (models == 0) { std::printf("pedtint: no crowd model found under %s\n", root.c_str()); return 1; }
+
+    // `--sheet <out.ppm>`: a contact sheet - one row for each crowd page (first page of each
+    // model), the shipped page then eight tints of it, at half size: the look of the rule
+    if (!sheetPath.empty()) {
+        std::vector<omk::Texture> picks;
+        std::set<std::string> seenNames;
+        for (int sex = 1; sex <= 2; ++sex)
+            for (const std::string& name : omk::pedModelTable(sex)) {
+                if (!seenNames.insert(name).second) continue;
+                const auto d = fs.read("MESHES/PERSOS/" + name + ".3DO");
+                const auto t = fs.read("MESHES/PERSOS/" + name + ".3DT");
+                for (auto& tx : omk::textures(d, t))
+                    if (tx.hasPixels() && tx.width == 256 && tx.height == 256) { picks.push_back(tx); break; }
+            }
+        constexpr int cols = 9, cell = 128;
+        const int rows = static_cast<int>(picks.size());
+        std::vector<std::uint8_t> img(static_cast<std::size_t>(cols * cell) * static_cast<std::size_t>(rows * cell) * 3, 0);
+        for (int r = 0; r < rows; ++r)
+            for (int c = 0; c < cols; ++c) {
+                std::uint32_t h = static_cast<std::uint32_t>(r * 977 + c) * 0x9E3779B1u + 777u;
+                h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
+                const int word = omk::pedTintWord(h);
+                const auto& tx = picks[static_cast<std::size_t>(r)];
+                for (int y = 0; y < cell; ++y)
+                    for (int x = 0; x < cell; ++x) {
+                        const int e = tx.idx[static_cast<std::size_t>(y * 2 * 256 + x * 2)];
+                        float in[3], o[3];
+                        for (int k = 0; k < 3; ++k) in[k] = static_cast<float>(tx.pal[static_cast<std::size_t>(e * 3 + k)]) / 255.0f;
+                        if (c == 0) std::memcpy(o, in, sizeof o); else omk::pedTintRgb(in, word, o, true);
+                        const std::size_t at = (static_cast<std::size_t>(r * cell + y) * static_cast<std::size_t>(cols * cell) +
+                                                static_cast<std::size_t>(c * cell + x)) * 3;
+                        for (int k = 0; k < 3; ++k) img[at + static_cast<std::size_t>(k)] = static_cast<std::uint8_t>(byteOf(o[k]));
+                    }
+            }
+        if (FILE* f = std::fopen(sheetPath.c_str(), "wb")) {
+            std::fprintf(f, "P6\n%d %d\n255\n", cols * cell, rows * cell);
+            std::fwrite(img.data(), 1, img.size(), f);
+            std::fclose(f);
+        }
+        return 0;
+    }
 
     constexpr int kWords = 4096;
     std::vector<int> words;
@@ -153,7 +196,7 @@ int main(int argc, char** argv) {
             for (int k = 0; k < 3; ++k) c[k] = static_cast<float>(pal[static_cast<std::size_t>(e) * 3 + static_cast<std::size_t>(k)]) / 255.0f;
             ++entries;
             const Hsv hv = hsvOf(c);
-            const bool isSkin = hv.h >= 5.0f && hv.h <= 45.0f && hv.s >= 0.2f && hv.s <= 0.55f && hv.v > 0.35f;
+            const bool isSkin = hv.h >= 5.0f && hv.h <= 38.0f && hv.s >= 0.2f && hv.s <= 0.55f && hv.v > 0.35f;
             const bool isWhite = hv.v >= 0.9f && hv.s <= 0.05f;
             const bool isBlack = hv.v < 0.08f;
             const bool isTurn = hv.s > 0.2f && hv.v > 0.2f && hv.h >= 100.0f && hv.h <= 330.0f;
@@ -173,8 +216,14 @@ int main(int argc, char** argv) {
                 // x the complexion's value factor under the others (a hue turn would break both)
                 if (isSkin) {
                     const float f = toneOf(w);
+                    // ...and the complexion's small lean of the hue (`kPedSkinNudge` a code step)
+                    const float na = static_cast<float>(((w >> omk::kPedTintSkinShift) & 3) - 2) * omk::kPedSkinNudge * 6.28318530718f;
+                    const float ncs = std::cos(na), nsn = std::sin(na), nk = (1.0f - ncs) / 3.0f, nq = 0.57735026919f * nsn;
+                    const float want[3] = {(ncs + nk) * c[0] + (nk - nq) * c[1] + (nk + nq) * c[2],
+                                           (nk + nq) * c[0] + (ncs + nk) * c[1] + (nk - nq) * c[2],
+                                           (nk - nq) * c[0] + (nk + nq) * c[1] + (ncs + nk) * c[2]};
                     int bad = 0;
-                    for (int k = 0; k < 3; ++k) bad = std::max(bad, std::abs(byteOf(o[k]) - byteOf(c[k] * f)));
+                    for (int k = 0; k < 3; ++k) bad = std::max(bad, std::abs(byteOf(o[k]) - byteOf(want[k] * f)));
                     if (bad > 1) ++skinBad;
                 }
                 if (isWhite && dmax != 0) ++whiteBad;

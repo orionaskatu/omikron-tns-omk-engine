@@ -58,8 +58,8 @@ namespace omk {
 
 // ---- the constants `scene.frag` repeats (same names, same values)
 inline constexpr float kPedHueCentre = 0.04f;    // the skin's hue, in turns (14 degrees)
-inline constexpr float kPedHueFull = 0.095f;     // within this of it (-20..49 degrees): all skin
-inline constexpr float kPedHueNone = 0.15f;      // beyond this (-40..68): none
+inline constexpr float kPedHueFull = 0.075f;     // within this of it (-13..41 degrees): all skin
+inline constexpr float kPedHueNone = 0.115f;     // beyond this (-27..55): none - the tan and khaki cloth above 41 is turned
 inline constexpr float kPedSatLow0 = 0.05f;      // saturation under this: none
 inline constexpr float kPedSatLow1 = 0.12f;      // ...over this: all
 inline constexpr float kPedSatHigh0 = 0.65f;     // ...and above this it fades
@@ -71,10 +71,10 @@ inline constexpr float kPedWhiteV0 = 0.65f;      // near-white: value from here
 inline constexpr float kPedWhiteV1 = 0.85f;      // ...fully from here
 inline constexpr float kPedWhiteS0 = 0.08f;      // ...with a saturation under this: all
 inline constexpr float kPedWhiteS1 = 0.2f;       // ...none over this
-inline constexpr float kPedSatBase = 0.55f;      // the saturation scale: base + code * step
-inline constexpr float kPedSatStep = 0.035f;     // (code 0..15: 0.55 .. 1.075 - muted, the city is dark)
-inline constexpr float kPedValBase = 0.80f;      // the brightness scale likewise
-inline constexpr float kPedValStep = 0.035f;     // (0.80 .. 1.325)
+inline constexpr float kPedSatBase = 0.75f;      // the saturation scale: base + code * step
+inline constexpr float kPedSatStep = 0.045f;     // (code 0..15: 0.75 .. 1.425)
+inline constexpr float kPedValBase = 0.75f;      // the brightness scale likewise
+inline constexpr float kPedValStep = 0.04f;      // (0.75 .. 1.35)
 inline constexpr float kPedChromaCap0 = 0.35f;   // a colour more saturated than this is pulled
 inline constexpr float kPedChromaCap1 = 0.90f;   // ...down, by up to
 inline constexpr float kPedChromaCapBy = 0.45f;  // ...this share (an orange coat is not a neon green one)
@@ -84,11 +84,14 @@ inline constexpr float kPedSpreadMax = 0.27f;    // the hue turn leans up to thi
 inline constexpr float kPedPhaseStep = 0.125f;   // ...from a phase on the hue circle, in eighths of a turn
 inline constexpr float kPedSkinBase = 0.78f;     // the complexion: the skin's value x (base + code * step)
 inline constexpr float kPedSkinStep = 0.11f;     // (code 0..3: 0.78 0.89 1.00 1.11 - code 2 is the shipped skin)
-inline constexpr float kPedDyeMax = 0.30f;       // a GREY cloth is dyed up to this much chroma (scaled by the saturation code)
+inline constexpr float kPedDyeMax = 0.45f;       // a GREY cloth is dyed up to this much chroma (scaled by the saturation code)
+inline constexpr float kPedDyeFloor = 0.18f;     // ...and by (floor + lift * the grey's brightness): a dark coat is dyed too
+inline constexpr float kPedDyeLift = 1.2f;
+inline constexpr float kPedSkinNudge = 0.012f;   // the complexion also leans the skin's hue, this many turns a code step
 inline constexpr float kPedDyeS0 = 0.08f;        // ...a colour under this saturation: all grey
 inline constexpr float kPedDyeS1 = 0.35f;        // ...over this: not grey
-inline constexpr float kPedDyeV0 = 0.10f;        // ...and under this value it is black and stays black
-inline constexpr float kPedDyeV1 = 0.25f;        // ...(fully dyed from here)
+inline constexpr float kPedDyeV0 = 0.06f;        // ...and under this value it is black and stays black
+inline constexpr float kPedDyeV1 = 0.16f;        // ...(fully dyed from here)
 inline constexpr float kPedDyeLuma = 3.0f;       // the dye's hue follows the grey's brightness: a pale and a dark grey differ
 inline constexpr float kPedScaleMin = 0.93f;     // the walker's build, as a share of the model's height
 inline constexpr float kPedScaleMax = 1.07f;
@@ -111,9 +114,18 @@ inline std::uint32_t mix(std::uint32_t x) {
 }
 }  // namespace pedtint_detail
 
+// A walker's (or a moto's) `look`: a hash of the area's seed and the slot, its low 16 bits replaced by
+// `slot` times the golden ratio (+ a seed offset) - well spread hues. No draw from the pool's `rng_`.
+inline std::uint32_t pedLook(std::uint32_t seed, std::uint32_t slot) {
+    const std::uint32_t h = pedtint_detail::mix(seed ^ (slot * 0x9E3779B1u));
+    return (h & 0xFFFF0000u) | ((slot * 40503u + (pedtint_detail::mix(seed) & 0xFFFFu)) & 0xFFFFu);
+}
+
 // The word for a walker's `look`.
 inline int pedTintWord(std::uint32_t look) {
-    const int hue = kPedHueMin + static_cast<int>((look & 0xFFFFu) % static_cast<std::uint32_t>(kPedHueSpan));
+    // the low 16 bits are a golden-ratio sequence over the slot (`pedLook`), so neighbours in the
+    // pool are far apart on the hue circle - a plain hash left three greens in seven walkers
+    const int hue = kPedHueMin + static_cast<int>((look & 0xFFFFu) * static_cast<std::uint32_t>(kPedHueSpan) >> 16);
     const int sat = static_cast<int>((look >> 16) & 15u);
     const int val = static_cast<int>((look >> 20) & 15u);
     const std::uint32_t h2 = pedtint_detail::mix(look ^ 0x68E31DA4u);
@@ -195,7 +207,19 @@ inline void pedTintRgb(const float in[3], int word, float out[3], bool protect =
     // THE COMPLEXION: what is kept as skin is not kept as light as it was - the
     // value scales (code 2 is the shipped skin, exactly)
     const float tone = kPedSkinBase + static_cast<float>((word >> kPedTintSkinShift) & 3) * kPedSkinStep;
-    const float toneMul = 1.0f + (tone - 1.0f) * skin * (1.0f - white);
+    const float toneMix = skin * (1.0f - white);
+    const float toneMul = 1.0f + (tone - 1.0f) * toneMix;
+    const float nudge = static_cast<float>(((word >> kPedTintSkinShift) & 3) - 2) * kPedSkinNudge * 6.28318530718f * toneMix;
+    float kept[3];
+    {
+        const float ncs = std::cos(nudge), nsn = std::sin(nudge);
+        const float nk = (1.0f - ncs) / 3.0f, nq = 0.57735026919f * nsn;
+        const float kr = (ncs + nk) * r + (nk - nq) * g + (nk + nq) * b;
+        const float kg = (nk + nq) * r + (ncs + nk) * g + (nk - nq) * b;
+        const float kb = (nk - nq) * r + (nk + nq) * g + (ncs + nk) * b;
+        const float kv[3] = {kr, kg, kb};
+        for (int i = 0; i < 3; ++i) kept[i] = std::min(std::max(kv[i] * toneMul, 0.0f), 1.0f);
+    }
     // THE TURN: the base hue turn leans, by the pixel's own hue, so two garments of
     // one walker are not turned alike (the spread)
     const float base = static_cast<float>((word >> kPedTintHueShift) & 255) / 256.0f;
@@ -224,12 +248,11 @@ inline void pedTintRgb(const float in[3], int word, float out[3], bool protect =
     float dye[3];
     pedHueRgb(base + spread * std::sin(6.28318530718f * (kPedDyeLuma * y0 + phase)), dye);
     const float dyeY = 0.299f * dye[0] + 0.587f * dye[1] + 0.114f * dye[2];
-    const float dyeBy = kPedDyeMax * (satCode / 15.0f) * wDye * y0 * 1.5f;
+    const float dyeBy = kPedDyeMax * (satCode / 15.0f) * wDye * (kPedDyeFloor + kPedDyeLift * y0);
     for (int i = 0; i < 3; ++i) {
         float v = y + (o[i] - y) * sc + (dye[i] - dyeY) * dyeBy;
         v = std::min(std::max(v * vc, 0.0f), 1.0f);
-        const float kept = std::min(std::max(in[i] * toneMul, 0.0f), 1.0f);
-        out[i] = v * (1.0f - prot) + kept * prot;
+        out[i] = v * (1.0f - prot) + kept[i] * prot;
     }
 }
 

@@ -656,8 +656,8 @@ vec2 trickles(vec3 w, float clock, float rain) {
 // Skin (a window of hue and saturation) and near-white are kept; so, by what they are, are
 // the near-blacks. The constants carry `pedtint.h`'s names and values.
 const float kPedHueCentre = 0.04;
-const float kPedHueFull = 0.095;
-const float kPedHueNone = 0.15;
+const float kPedHueFull = 0.075;
+const float kPedHueNone = 0.115;
 const float kPedSatLow0 = 0.05;
 const float kPedSatLow1 = 0.12;
 const float kPedSatHigh0 = 0.65;
@@ -669,10 +669,10 @@ const float kPedWhiteV0 = 0.65;
 const float kPedWhiteV1 = 0.85;
 const float kPedWhiteS0 = 0.08;
 const float kPedWhiteS1 = 0.2;
-const float kPedSatBase = 0.55;
-const float kPedSatStep = 0.035;
-const float kPedValBase = 0.80;
-const float kPedValStep = 0.035;
+const float kPedSatBase = 0.75;
+const float kPedSatStep = 0.045;
+const float kPedValBase = 0.75;
+const float kPedValStep = 0.04;
 const float kPedChromaCap0 = 0.35;
 const float kPedChromaCap1 = 0.90;
 const float kPedChromaCapBy = 0.45;
@@ -680,11 +680,14 @@ const float kPedSpreadMax = 0.27;
 const float kPedPhaseStep = 0.125;
 const float kPedSkinBase = 0.78;
 const float kPedSkinStep = 0.11;
-const float kPedDyeMax = 0.30;
+const float kPedDyeMax = 0.45;
+const float kPedDyeFloor = 0.18;
+const float kPedDyeLift = 1.2;
+const float kPedSkinNudge = 0.012;
 const float kPedDyeS0 = 0.08;
 const float kPedDyeS1 = 0.35;
-const float kPedDyeV0 = 0.10;
-const float kPedDyeV1 = 0.25;
+const float kPedDyeV0 = 0.06;
+const float kPedDyeV1 = 0.16;
 const float kPedDyeLuma = 3.0;
 const float kPedScaleMin = 0.93;
 const float kPedScaleMax = 1.07;
@@ -713,8 +716,15 @@ vec3 pedTint(vec3 c, int word) {
     float prot = max(skin, white);
     // the complexion: what is kept as skin has its value scaled (code 2 is the shipped skin)
     float tone = kPedSkinBase + float((word >> 29) & 3) * kPedSkinStep;
-    float toneMul = 1.0 + (tone - 1.0) * skin * (1.0 - white);
-    vec3 kept = clamp(c * toneMul, 0.0, 1.0);
+    float toneMix = skin * (1.0 - white);
+    float toneMul = 1.0 + (tone - 1.0) * toneMix;
+    // ...and leans the skin's hue a little (code 2: none)
+    float nudge = float(((word >> 29) & 3) - 2) * kPedSkinNudge * 6.28318530718 * toneMix;
+    float ncs = cos(nudge), nsn = sin(nudge);
+    float nk = (1.0 - ncs) / 3.0, nq = 0.57735026919 * nsn;
+    vec3 kept = clamp(vec3((ncs + nk) * c.r + (nk - nq) * c.g + (nk + nq) * c.b,
+                           (nk + nq) * c.r + (ncs + nk) * c.g + (nk - nq) * c.b,
+                           (nk - nq) * c.r + (nk + nq) * c.g + (ncs + nk) * c.b) * toneMul, 0.0, 1.0);
     if (prot >= 1.0) return kept;
     // the turn leans by the pixel's own hue (the spread), so two garments are not turned alike
     float base = float((word >> 6) & 255) / 256.0;
@@ -739,7 +749,7 @@ vec3 pedTint(vec3 c, int word) {
     float wDye = (1.0 - smoothstep(kPedDyeS0, kPedDyeS1, s)) * smoothstep(kPedDyeV0, kPedDyeV1, mx);
     vec3 dye = pedHueRgb(base + spread * sin(6.28318530718 * (kPedDyeLuma * y0 + phase)));
     float dyeY = dot(dye, vec3(0.299, 0.587, 0.114));
-    float dyeBy = kPedDyeMax * (satCode / 15.0) * wDye * y0 * 1.5;
+    float dyeBy = kPedDyeMax * (satCode / 15.0) * wDye * (kPedDyeFloor + kPedDyeLift * y0);
     o = clamp((y + (o - y) * sc + (dye - dyeY) * dyeBy) * vc, 0.0, 1.0);
     return o * (1.0 - prot) + kept * prot;
 }

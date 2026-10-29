@@ -5,6 +5,7 @@
 #include "formats/anim.h"
 #include "formats/le.h"
 #include "o3de/vecmath.h"
+#include "o3de/pedtint.h"
 
 #include <algorithm>
 #include <cmath>
@@ -403,11 +404,7 @@ bool Sliders::spawnOne(int lane, const float at[3], const float dir[3], float se
     const int idx = static_cast<int>(movers_.size());
     // the walker's look (`Pedestrian::look`): the area's seed and his slot,
     // through a 32-bit finaliser - no draw from `rng_`
-    {
-        std::uint32_t h = seed_ ^ (static_cast<std::uint32_t>(idx) * 0x9E3779B1u);
-        h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
-        w.look = h;
-    }
+    w.look = pedLook(seed_, static_cast<std::uint32_t>(idx));
     movers_.push_back(std::move(w));
     auto& list = listFor(lane, keyIndex + 1);
     list.insert(list.begin(), idx);
